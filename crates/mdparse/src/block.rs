@@ -85,13 +85,21 @@ enum Kind {
     },
     /// 腳註定義，標籤存在 `content`。
     FootnoteDef,
+    /// 跨行的 `$$` 數學區塊。`offset` 是開頭 `$$` 的縮排，內容行會移除至多這麼多空白。
+    MathBlock {
+        offset: usize,
+    },
 }
 
 impl Kind {
     fn accepts_lines(&self) -> bool {
         matches!(
             self,
-            Kind::Paragraph | Kind::CodeBlock { .. } | Kind::Html { .. } | Kind::Table { .. }
+            Kind::Paragraph
+                | Kind::CodeBlock { .. }
+                | Kind::Html { .. }
+                | Kind::Table { .. }
+                | Kind::MathBlock { .. }
         )
     }
 
@@ -340,11 +348,14 @@ impl<'a> Parser<'a> {
             let kind = &self.nodes[container].kind;
             !matches!(kind, Kind::Paragraph | Kind::Table { .. }) && kind.accepts_lines()
         };
-        let gfm = self.options.gfm;
+        let (gfm, math) = (self.options.gfm, self.options.math);
         while !matched_leaf {
             self.find_next_nonspace();
             let maybe_special = self.peek(self.next_nonspace).is_some_and(|c| {
-                b"#`~*+_=<>-".contains(&c) || c.is_ascii_digit() || (gfm && b"|:[".contains(&c))
+                b"#`~*+_=<>-".contains(&c)
+                    || c.is_ascii_digit()
+                    || (gfm && b"|:[".contains(&c))
+                    || (math && c == b'$')
             });
             if !self.indented && !maybe_special {
                 self.advance_next_nonspace();
@@ -454,6 +465,26 @@ impl<'a> Parser<'a> {
                     Continue::Matched
                 }
             }
+            Kind::MathBlock { offset } => {
+                let mut i = offset;
+                while i > 0 && self.peek(self.offset).is_some_and(scan::is_space_or_tab) {
+                    self.advance_offset(1, true);
+                    i -= 1;
+                }
+                // 以 `$$` 結尾的行關閉區塊，`$$` 之前的內容仍屬於公式
+                let rest = self.line[self.offset..].trim_end_matches([' ', '\t']);
+                if let Some(content) = rest.strip_suffix("$$") {
+                    if !scan::is_blank(content) {
+                        self.nodes[id].lines.push(Line {
+                            pad: 0,
+                            text: content,
+                        });
+                    }
+                    self.finalize(id, self.line_number);
+                    return Continue::Consumed;
+                }
+                Continue::Matched
+            }
             Kind::FootnoteDef => {
                 if self.indent >= CODE_INDENT {
                     self.advance_offset(CODE_INDENT, true);
@@ -507,6 +538,32 @@ impl<'a> Parser<'a> {
                 self.advance_next_nonspace();
                 self.advance_offset(len, false);
                 return Start::Leaf;
+            }
+
+            // `$$` 數學區塊：同一行關閉（`$$ x $$`）或延續到以 `$$` 結尾的行
+            if self.options.math
+                && let Some(after) = rest.strip_prefix("$$")
+            {
+                match after.find("$$") {
+                    Some(end) if scan::is_blank(&after[end + 2..]) => {
+                        self.close_unmatched_blocks();
+                        let id = self.add_child(Kind::MathBlock { offset: 0 }, self.next_nonspace);
+                        self.nodes[id].content = Cow::Borrowed(after[..end].trim());
+                        self.advance_to_end();
+                        self.finalize(id, self.line_number);
+                        return Start::Leaf;
+                    }
+                    // 同一行還有其他內容：當成段落中的行內公式
+                    Some(_) => {}
+                    None => {
+                        let offset = self.indent;
+                        self.close_unmatched_blocks();
+                        self.add_child(Kind::MathBlock { offset }, self.next_nonspace);
+                        self.advance_next_nonspace();
+                        self.advance_offset(2, false);
+                        return Start::Leaf;
+                    }
+                }
             }
 
             // HTML 區塊：類型 7 不能打斷段落（包含 lazy continuation 中的段落）
@@ -726,6 +783,14 @@ impl<'a> Parser<'a> {
                 let lines = std::mem::take(&mut self.nodes[id].lines);
                 self.nodes[id].content = self.join_lines(&lines, false);
             }
+            // 單行的數學區塊在建立時就已設定內容
+            Kind::MathBlock { .. } if !self.nodes[id].lines.is_empty() => {
+                let lines = std::mem::take(&mut self.nodes[id].lines);
+                self.nodes[id].content = match self.join_lines(&lines, false) {
+                    Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
+                    Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
+                };
+            }
             // 清單與項目的結束行取最後一個子區塊，尾端的空行不算在內，
             // 這樣「兩區塊間是否隔著空行」只需比較行號。
             Kind::Item { .. } | Kind::List { .. } => {
@@ -892,10 +957,21 @@ fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>)
                 .map(|&item| build_item(nodes, item, ctx))
                 .collect(),
         },
+        // ```math 視為數學區塊
+        Kind::CodeBlock { .. } if ctx.options.math && node.lang.as_deref() == Some("math") => {
+            BlockKind::MathBlock(match node.content {
+                Cow::Borrowed(s) => Cow::Borrowed(s.trim_end()),
+                Cow::Owned(s) => Cow::Owned(s.trim_end().to_string()),
+            })
+        }
+        Kind::MathBlock { .. } => BlockKind::MathBlock(node.content),
         Kind::CodeBlock { .. } => BlockKind::CodeBlock {
             lang: node.lang,
             code: node.content,
         },
+        Kind::Html { .. } if ctx.options.page_break && is_page_break(&node.content) => {
+            BlockKind::PageBreak
+        }
         Kind::Html { .. } => BlockKind::Html(node.content),
         Kind::ThematicBreak => BlockKind::ThematicBreak,
         Kind::Table { align } => {
@@ -946,6 +1022,14 @@ fn build_item<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>) 
         span: item.start,
         task,
     }
+}
+
+/// 內容只有 `<!-- pagebreak -->` 的 HTML 區塊（不分大小寫，註解內可有空白）。
+fn is_page_break(html: &str) -> bool {
+    html.trim()
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))
+        .is_some_and(|s| s.trim().eq_ignore_ascii_case("pagebreak"))
 }
 
 /// `[ ] `、`[x] `：回傳（是否勾選, 標記與其後空白的長度）。

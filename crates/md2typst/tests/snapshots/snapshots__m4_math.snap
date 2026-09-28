@@ -1,0 +1,36 @@
+---
+source: crates/md2typst/tests/snapshots.rs
+expression: "md2typst::body(&fixture(\"m4-math.md\"), &Default::default()).source"
+---
+#import "@mdpdf/mitex-scope:0.2.4": mitex-scope
+#let mdpdf-math(code, block: false) = math.equation(
+  block: block,
+  eval("$" + code + "$", scope: mitex-scope),
+)
+
+#heading(level: 1)[#"數學公式"]
+
+#"行內公式 "#mdpdf-math("E  =  m c ^(2 )")#"，以及 "#mdpdf-math("frac(a + b ,2 )")#" 與 "#mdpdf-math("mitexsqrt(x ^(2 ) +  y ^(2 ))")#"。價格 $5 到 $10 不是公式，跳脫的 $x$ 也不是。"
+
+#"中文說明："#mdpdf-math("#textmath[速度]; =  frac(#textmath[距離];,#textmath[時間];)")#"。"
+
+#mdpdf-math("integral _(0 )^(oo ) e ^(- x ^(2 ))thin d x  =  frac(mitexsqrt(pi ),2 )", block: true)
+
+#mdpdf-math("sum _(i = 1 )^(n ) i  =  frac(n \\(n + 1 \\),2 )", block: true)
+
+#mdpdf-math("aligned(\nnabla  dot.c  mitexmathbf(E ) &=  frac(rho ,epsilon _(0 )) \\ \nnabla  times  mitexmathbf(B ) &=  mu _(0 ) mitexmathbf(J )\n)", block: true)
+
+#"矩陣："
+
+#mdpdf-math("A  =  pmatrix( 1  zws , 2  zws ; 3  zws , 4  )\\,quad \nf \\(x \\) =  cases( x ^(2 ) & quad x  >=  0  , - x  & quad x  <  0  )", block: true)
+
+#list(tight: true,
+[
+#"清單中的公式 "#mdpdf-math("alpha  +  beta  =  gamma ")
+],
+[
+#"箭頭 "#mdpdf-math("A  xrightarrow(f ) B ")
+],
+)
+
+#"錯誤的公式會退回原文："#raw("\\foo{x}")#" 以及 "#mdpdf-math("lr(\\(  x ")#"，文件其餘部分照常輸出。"

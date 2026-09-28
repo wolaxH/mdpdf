@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use mdparse::{Align, Block, BlockKind, Cell, Inline, ListItem, is_cjk, normalize_label};
@@ -22,6 +23,15 @@ pub const PRELUDE: &str = r#"// mdpdf 輔助函式
 )
 "#;
 
+/// 文件含有數學公式時才加入：LaTeX 由 MiTeX 在 Rust 端轉成 Typst 數學語法，
+/// 再以 MiTeX 的指令定義（`mitex-scope`）求值。
+pub const MATH_PRELUDE: &str = r#"#import "@mdpdf/mitex-scope:0.2.4": mitex-scope
+#let mdpdf-math(code, block: false) = math.equation(
+  block: block,
+  eval("$" + code + "$", scope: mitex-scope),
+)
+"#;
+
 /// 預設樣式模板，接在 [`PRELUDE`] 之後。
 pub const TEMPLATE: &str = include_str!("../../../assets/template.typ");
 
@@ -34,6 +44,8 @@ pub struct Options {
     pub base_dir: Option<PathBuf>,
     /// Markdown 解析選項。
     pub parse: mdparse::Options,
+    /// 強制以原文顯示的公式（[`Output::formulas`] 的索引），用於 Typst 排版失敗後重試。
+    pub math_fallback: HashSet<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,46 +59,82 @@ pub struct Warning {
 pub struct Output {
     pub source: String,
     pub warnings: Vec<Warning>,
+    /// 每個數學公式在 `source` 中的位置，依出現順序排列。
+    pub formulas: Vec<Formula>,
+}
+
+/// 產生的原始碼中的一個數學公式。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Formula {
+    /// 公式呼叫在 `source` 中的位元組範圍。
+    pub range: Range<usize>,
+    /// Markdown 原始行號（所在區塊的起始行）。
+    pub line: u32,
+    /// LaTeX 原文。
+    pub tex: String,
 }
 
 /// 把 Markdown 轉成完整的 Typst 原始碼（含模板）。
 pub fn convert(markdown: &str, options: &Options) -> Output {
-    let mut out = Output {
-        source: String::with_capacity(PRELUDE.len() + TEMPLATE.len() + markdown.len() * 2),
-        warnings: Vec::new(),
-    };
-    out.source.push_str(PRELUDE);
-    out.source.push('\n');
-    out.source.push_str(TEMPLATE);
-    out.source.push('\n');
-    write_body(&mut out, markdown, options);
-    out
+    let mut prefix = String::with_capacity(PRELUDE.len() + TEMPLATE.len() + 2);
+    prefix.push_str(PRELUDE);
+    prefix.push('\n');
+    prefix.push_str(TEMPLATE);
+    prefix.push('\n');
+    assemble(prefix, markdown, options)
 }
 
-/// 只產生內文，不含模板。
+/// 只產生內文，不含模板（用到數學公式時仍會加上 [`MATH_PRELUDE`]）。
 pub fn body(markdown: &str, options: &Options) -> Output {
-    let mut out = Output {
-        source: String::with_capacity(markdown.len() * 2),
-        warnings: Vec::new(),
-    };
-    write_body(&mut out, markdown, options);
-    out
+    assemble(String::new(), markdown, options)
 }
 
-fn write_body(out: &mut Output, markdown: &str, options: &Options) {
+fn assemble(mut source: String, markdown: &str, options: &Options) -> Output {
+    let mut body = String::with_capacity(markdown.len() * 2);
+    let mut warnings = Vec::new();
+    let mut formulas = Vec::new();
+    let uses_math = write_body(&mut body, &mut warnings, &mut formulas, markdown, options);
+    if uses_math {
+        source.push_str(MATH_PRELUDE);
+        source.push('\n');
+    }
+    let offset = source.len();
+    for formula in &mut formulas {
+        formula.range = formula.range.start + offset..formula.range.end + offset;
+    }
+    source.push_str(&body);
+    Output {
+        source,
+        warnings,
+        formulas,
+    }
+}
+
+/// 回傳是否有公式經 MiTeX 轉換（需要 [`MATH_PRELUDE`]）。
+fn write_body(
+    out: &mut String,
+    warnings: &mut Vec<Warning>,
+    formulas: &mut Vec<Formula>,
+    markdown: &str,
+    options: &Options,
+) -> bool {
     let doc = mdparse::parse_with(markdown, options.parse);
     let mut footnote_defs = HashMap::new();
     collect_footnotes(&doc.blocks, &mut footnote_defs);
-    Writer {
-        out: &mut out.source,
-        warnings: &mut out.warnings,
+    let mut writer = Writer {
+        out,
+        warnings,
+        formulas,
         options,
         line: 1,
         footnote_defs,
         footnote_ids: HashMap::new(),
         footnotes_in_progress: HashSet::new(),
-    }
-    .blocks(&doc.blocks);
+        uses_math: false,
+        depth: 0,
+    };
+    writer.blocks(&doc.blocks);
+    writer.uses_math
 }
 
 fn collect_footnotes<'d, 'a>(blocks: &'d [Block<'a>], defs: &mut HashMap<String, &'d [Block<'a>]>) {
@@ -110,6 +158,11 @@ fn collect_footnotes<'d, 'a>(blocks: &'d [Block<'a>], defs: &mut HashMap<String,
 struct Writer<'o, 'd, 'a> {
     out: &'o mut String,
     warnings: &'o mut Vec<Warning>,
+    formulas: &'o mut Vec<Formula>,
+    /// 是否有公式經 MiTeX 轉換。
+    uses_math: bool,
+    /// 目前區塊的巢狀層數，最外層為 1。
+    depth: usize,
     options: &'o Options,
     /// 目前處理中區塊的起始行，用於警告。
     line: u32,
@@ -131,8 +184,15 @@ impl Writer<'_, '_, '_> {
 
     /// 輸出一串區塊，彼此以空行分隔。每個區塊都以換行結尾。
     fn blocks(&mut self, blocks: &[Block]) {
+        self.depth += 1;
         let mut first = true;
         for block in blocks {
+            // Typst 只允許在最外層換頁；清單、引言、腳註內的換頁標記忽略
+            if matches!(block.kind, BlockKind::PageBreak) && self.depth > 1 {
+                self.line = block.span.line;
+                self.warn("換頁標記只能用在最外層（不能在清單、引言或腳註中），已忽略".into());
+                continue;
+            }
             // 原始 HTML 不渲染；腳註定義在引用處輸出
             if matches!(
                 block.kind,
@@ -147,6 +207,7 @@ impl Writer<'_, '_, '_> {
             self.line = block.span.line;
             self.block(block);
         }
+        self.depth -= 1;
     }
 
     fn block(&mut self, block: &Block) {
@@ -205,7 +266,13 @@ impl Writer<'_, '_, '_> {
                 self.out.push_str(")\n");
             }
             BlockKind::Html(_) | BlockKind::FootnoteDef { .. } => {}
+            BlockKind::MathBlock(tex) => {
+                self.math(tex, true);
+                self.out.push('\n');
+            }
             BlockKind::ThematicBreak => self.out.push_str("#line(length: 100%)\n"),
+            // weak：已經在新頁開頭時不會再多出一頁空白
+            BlockKind::PageBreak => self.out.push_str("#pagebreak(weak: true)\n"),
             BlockKind::Table { align, head, rows } => self.table(align, head, rows),
         }
     }
@@ -296,6 +363,10 @@ impl Writer<'_, '_, '_> {
                     self.inlines(children);
                     self.out.push(']');
                 }
+                Inline::Math { tex, display } => {
+                    self.flush_text(&mut run);
+                    self.math(tex, *display);
+                }
                 Inline::FootnoteRef(label) => {
                     self.flush_text(&mut run);
                     self.footnote(label);
@@ -332,6 +403,44 @@ impl Writer<'_, '_, '_> {
             }
         }
         self.flush_text(&mut run);
+    }
+
+    /// 以 MiTeX 把 LaTeX 轉成 Typst 數學式。轉換失敗或被指定退回時，以等寬原文顯示。
+    fn math(&mut self, tex: &str, block: bool) {
+        let index = self.formulas.len();
+        let start = self.out.len();
+        let converted = if self.options.math_fallback.contains(&index) {
+            None
+        } else {
+            match mitex::convert_math(tex, None) {
+                Ok(code) => Some(space_cases(&code)),
+                Err(err) => {
+                    let err = err.strip_prefix("error: ").unwrap_or(&err);
+                    self.warn(format!("無法轉換公式 `{tex}`：{err}，改以原文顯示"));
+                    None
+                }
+            }
+        };
+        match converted {
+            Some(code) => {
+                self.uses_math = true;
+                self.out.push_str("#mdpdf-math(");
+                push_str_literal(self.out, &code);
+                self.out
+                    .push_str(if block { ", block: true)" } else { ")" });
+            }
+            None => {
+                self.out
+                    .push_str(if block { "#raw(block: true, " } else { "#raw(" });
+                push_str_literal(self.out, tex);
+                self.out.push(')');
+            }
+        }
+        self.formulas.push(Formula {
+            range: start..self.out.len(),
+            line: self.line,
+            tex: tex.to_string(),
+        });
     }
 
     /// 第一次引用時輸出完整腳註並加上標籤，之後的引用指向同一個腳註。
@@ -556,6 +665,51 @@ fn is_html_element(name: &str) -> bool {
         .is_ok()
 }
 
+/// 在 `cases(...)` 的值與條件之間加上間距。
+///
+/// MiTeX 把 LaTeX 的 `&` 原樣轉成 Typst 的對齊點，但 Typst 的 `cases` 在對齊點不留空白，
+/// `x^2 & x \ge 0` 會排成「x² x ≥ 0」。這裡只改 `cases(` 最外層的 `&`，
+/// 跳脫字元（`\(`、`\&` 等）與巢狀括號內的內容都不動。
+fn space_cases(code: &str) -> String {
+    if !code.contains("cases(") {
+        return code.to_string();
+    }
+    let mut out = String::with_capacity(code.len() + 16);
+    // 每層括號是否為 cases 的引數
+    let mut stack: Vec<bool> = Vec::new();
+    let mut chars = code.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                out.push(c);
+                if let Some((_, next)) = chars.next() {
+                    out.push(next);
+                }
+                continue;
+            }
+            '(' => {
+                let before = &code[..i];
+                let is_cases = before.ends_with("cases")
+                    && !before[..before.len() - 5]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|p| p.is_alphanumeric() && p != 'r');
+                stack.push(is_cases);
+            }
+            ')' => {
+                stack.pop();
+            }
+            '&' if stack.last() == Some(&true) => {
+                out.push_str("& quad");
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// 段落是否只由圖片組成（圖片之間只有換行或空白）。
 fn is_image_paragraph(inlines: &[Inline]) -> bool {
     inlines.iter().any(|i| matches!(i, Inline::Image { .. }))
@@ -710,6 +864,33 @@ mod tests {
             typst("Vec<String> 與 Option<T>"),
             "#\"Vec<String> 與 Option<T>\"\n"
         );
+    }
+
+    #[test]
+    fn page_breaks() {
+        let out = body(
+            "一\n\n<!-- pagebreak -->\n\n二\n\n- 項目\n\n  <!-- pagebreak -->\n",
+            &Options::default(),
+        );
+        assert_eq!(out.source.matches("#pagebreak(weak: true)").count(), 1);
+        assert_eq!(out.warnings.len(), 1);
+        assert_eq!(out.warnings[0].line, 9);
+    }
+
+    #[test]
+    fn cases_get_spacing() {
+        assert_eq!(
+            space_cases("cases( x & x >= 0 , - x & x < 0 )"),
+            "cases( x & quad x >= 0 , - x & quad x < 0 )"
+        );
+        assert_eq!(space_cases("rcases(a & b)"), "rcases(a & quad b)");
+        // 巢狀括號與跳脫字元內的 & 不處理
+        assert_eq!(
+            space_cases("cases(f(a & b) & \\& c)"),
+            "cases(f(a & b) & quad \\& c)"
+        );
+        assert_eq!(space_cases("pmatrix(a & b)"), "pmatrix(a & b)");
+        assert_eq!(space_cases("mycases(a & b)"), "mycases(a & b)");
     }
 
     #[test]

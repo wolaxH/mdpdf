@@ -49,4 +49,4 @@ Setext 標題
 
 [ref]: https://example.com "參照定義不會出現在輸出"
 
-最後一段：Typst 標記 #set、$x$、@ref、Vec<T> 與 \*星號\* 原樣輸出。
+最後一段：Typst 標記 #set、\$x\$、@ref、Vec<T> 與 \*星號\* 原樣輸出。

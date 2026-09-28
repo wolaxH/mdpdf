@@ -28,3 +28,8 @@ fn m2_inline() {
 fn m3_gfm() {
     insta::assert_snapshot!(md2typst::body(&fixture("m3-gfm.md"), &Default::default()).source);
 }
+
+#[test]
+fn m4_math() {
+    insta::assert_snapshot!(md2typst::body(&fixture("m4-math.md"), &Default::default()).source);
+}

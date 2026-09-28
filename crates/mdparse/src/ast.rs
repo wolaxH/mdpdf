@@ -54,6 +54,10 @@ pub enum BlockKind<'a> {
     /// 原始 HTML 區塊：只辨識，不渲染。
     Html(Cow<'a, str>),
     ThematicBreak,
+    /// 換頁（mdpdf 擴充，見 [`crate::Options::page_break`]）。
+    PageBreak,
+    /// 區塊數學公式，內容為 LaTeX 原文。
+    MathBlock(Cow<'a, str>),
     /// GFM 表格。表頭與每一列的儲存格數都等於 `align.len()`。
     Table {
         align: Vec<Align>,
@@ -111,6 +115,11 @@ pub enum Inline<'a> {
     },
     /// 行內原始 HTML：只辨識，不渲染。
     Html(Cow<'a, str>),
+    /// 數學公式，內容為 LaTeX 原文。`display` 為段落中的 `$$...$$`。
+    Math {
+        tex: Cow<'a, str>,
+        display: bool,
+    },
     SoftBreak,
     HardBreak,
 }
@@ -140,6 +149,10 @@ impl Inline<'_> {
                 alt: all(alt),
             },
             Inline::Html(s) => Inline::Html(owned(s)),
+            Inline::Math { tex, display } => Inline::Math {
+                tex: owned(tex),
+                display,
+            },
             Inline::SoftBreak => Inline::SoftBreak,
             Inline::HardBreak => Inline::HardBreak,
         }
@@ -151,7 +164,7 @@ pub fn plain_text(inlines: &[Inline]) -> String {
     fn walk(inlines: &[Inline], out: &mut String) {
         for inline in inlines {
             match inline {
-                Inline::Text(s) | Inline::Code(s) => out.push_str(s),
+                Inline::Text(s) | Inline::Code(s) | Inline::Math { tex: s, .. } => out.push_str(s),
                 Inline::Emph(v) | Inline::Strong(v) | Inline::Strike(v) => walk(v, out),
                 Inline::Link { content, .. } => walk(content, out),
                 Inline::Image { alt, .. } => walk(alt, out),

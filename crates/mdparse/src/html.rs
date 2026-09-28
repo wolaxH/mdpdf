@@ -149,6 +149,18 @@ impl<'d, 'a> Renderer<'d, 'a> {
             }
             // 腳註內容在文件末尾輸出
             BlockKind::FootnoteDef { .. } => {}
+            BlockKind::PageBreak => {
+                self.cr();
+                self.out.push_str("<div style=\"break-after: page\"></div>");
+                self.cr();
+            }
+            BlockKind::MathBlock(tex) => {
+                self.cr();
+                self.out.push_str("<div class=\"math display\">\\[");
+                escape(&mut self.out, tex);
+                self.out.push_str("\\]</div>");
+                self.cr();
+            }
             BlockKind::ThematicBreak => {
                 self.cr();
                 self.out.push_str("<hr />");
@@ -201,6 +213,17 @@ impl<'d, 'a> Renderer<'d, 'a> {
                     self.out.push_str(" />");
                 }
                 Inline::Html(html) => self.out.push_str(html),
+                Inline::Math { tex, display } => {
+                    let (open, close, class) = if *display {
+                        ("\\[", "\\]", "display")
+                    } else {
+                        ("\\(", "\\)", "inline")
+                    };
+                    self.out
+                        .push_str(&format!("<span class=\"math {class}\">{open}"));
+                    escape(&mut self.out, tex);
+                    self.out.push_str(&format!("{close}</span>"));
+                }
                 Inline::Strike(children) => {
                     self.out.push_str("<del>");
                     self.inlines(children);
@@ -276,7 +299,9 @@ impl<'d, 'a> Renderer<'d, 'a> {
 fn alt_text(inlines: &[Inline], out: &mut String) {
     for inline in inlines {
         match inline {
-            Inline::Text(s) | Inline::Code(s) | Inline::Html(s) => out.push_str(s),
+            Inline::Text(s) | Inline::Code(s) | Inline::Html(s) | Inline::Math { tex: s, .. } => {
+                out.push_str(s)
+            }
             Inline::Emph(v) | Inline::Strong(v) | Inline::Strike(v) => alt_text(v, out),
             Inline::FootnoteRef(_) => {}
             Inline::Link { content, .. } => alt_text(content, out),

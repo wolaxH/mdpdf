@@ -5,8 +5,8 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use mdpdf::MdWorld;
 use mdpdf::fonts::FontOptions;
-use mdpdf::{MdWorld, compile_pdf};
 use typst::diag::SourceDiagnostic;
 use typst_kit::diagnostics::termcolor::{ColorChoice, StandardStream};
 use typst_kit::diagnostics::{DiagnosticFormat, emit};
@@ -87,45 +87,39 @@ fn run(cli: Cli) -> Result<ExitCode> {
         (None, true) => bail!("從 stdin 讀取時請用 -o 指定輸出路徑"),
     };
 
-    let converted = md2typst::convert(
-        &markdown,
-        &md2typst::Options {
-            base_dir: Some(dir.clone()),
-            parse: mdparse::Options {
-                cjk_emphasis: !cli.no_cjk_emphasis,
-                ..Default::default()
-            },
+    let options = md2typst::Options {
+        base_dir: Some(dir.clone()),
+        parse: mdparse::Options {
+            cjk_emphasis: !cli.no_cjk_emphasis,
+            ..Default::default()
         },
-    );
-    for warning in &converted.warnings {
-        eprintln!("警告：{name}:{}：{}", warning.line, warning.message);
-    }
-    if cli.strict && !converted.warnings.is_empty() {
-        bail!(
-            "有 {} 個警告，--strict 模式下停止",
-            converted.warnings.len()
-        );
-    }
-    if let Some(path) = &cli.emit_typst {
-        fs::write(path, &converted.source)
-            .with_context(|| format!("無法寫入 {}", path.display()))?;
-    }
-
+        ..Default::default()
+    };
     let fonts = mdpdf::fonts::load(&FontOptions {
         font_paths: cli.font_path,
         system_fonts: !cli.no_system_fonts,
     })?;
-    let world = MdWorld::new(&dir.join(format!("{name}.typ")), converted.source, fonts)?;
+    let main_path = dir.join(format!("{name}.typ"));
+    let rendered = mdpdf::render(&markdown, &main_path, options, fonts)?;
 
-    let result = compile_pdf(&world);
-    print_diagnostics(&world, &result.warnings)?;
-    let pdf = match result.output {
+    if let Some(path) = &cli.emit_typst {
+        fs::write(path, &rendered.source)
+            .with_context(|| format!("無法寫入 {}", path.display()))?;
+    }
+    for warning in &rendered.warnings {
+        eprintln!("警告：{name}:{}：{}", warning.line, warning.message);
+    }
+    print_diagnostics(&rendered.world, &rendered.result.warnings)?;
+    let pdf = match rendered.result.output {
         Ok(pdf) => pdf,
         Err(errors) => {
-            print_diagnostics(&world, &errors)?;
+            print_diagnostics(&rendered.world, &errors)?;
             return Ok(ExitCode::FAILURE);
         }
     };
+    if cli.strict && !rendered.warnings.is_empty() {
+        bail!("有 {} 個警告，--strict 模式下停止", rendered.warnings.len());
+    }
 
     if output == Path::new("-") {
         let mut stdout = io::stdout().lock();

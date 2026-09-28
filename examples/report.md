@@ -58,17 +58,31 @@ fn count_headings(markdown: &str) -> usize {
 | GFM 擴充 | 23 | 23 | 100% |
 | 開啟擴充後的 CommonMark | 652 | 652 | 100% |
 
-### 2.3 待辦事項
+### 2.3 數學公式
+
+公式以 LaTeX 撰寫，由 MiTeX 轉成 Typst 排版。行內公式如 $e^{i\pi} + 1 = 0$，
+區塊公式：
+
+$$
+\hat{f}(\xi) = \int_{-\infty}^{\infty} f(x)\, e^{-2\pi i x \xi}\, dx
+$$
+
+$$
+\mathbf{A} = \begin{bmatrix} a_{11} & a_{12} \\ a_{21} & a_{22} \end{bmatrix},\quad
+\operatorname{sgn}(x) = \begin{cases} 1 & x > 0 \\ 0 & x = 0 \\ -1 & x < 0 \end{cases}
+$$
+
+### 2.4 待辦事項
 
 - [x] 表格、刪除線、任務清單、腳註
 - [x] CJK 寬鬆強調：**「重點」**這樣的寫法也能正確加粗
-- [ ] LaTeX 數學公式（M4）
+- [x] LaTeX 數學公式（M4）
 - [ ] ~~自己畫 PDF~~ 改用內嵌 Typst 排版
 - [ ] 字型與樣式選項（M5）
 
 [^bench]: 以 release 版在 EndeavourOS 上量測，不含系統字型掃描。
 
----
+<!-- pagebreak -->
 
 ## 三、參考資料
 
@@ -77,6 +91,6 @@ fn count_headings(markdown: &str) -> usize {
 - 問題回報：<https://github.com/example/mdpdf/issues>
 - 聯絡信箱：<dev@example.com>
 
-特殊字元測試：&copy; 2026、`Vec<String>`、Option<T>、#set、$x$、@ref 都會原樣輸出。
+特殊字元測試：&copy; 2026、`Vec<String>`、Option<T>、#set、\$x\$、@ref 都會原樣輸出。
 
 [spec]: https://spec.commonmark.org/0.31.2/

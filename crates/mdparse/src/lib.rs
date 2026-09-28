@@ -23,6 +23,11 @@ pub struct Options {
     /// CJK 寬鬆強調：強調符號外側緊鄰中日韓文字時，也視為可以開啟／關閉強調，
     /// 讓 `這是**「重點」**這樣` 能正確變成粗體。標準 CommonMark 不允許。
     pub cjk_emphasis: bool,
+    /// 數學公式：行內 `$...$`、區塊 `$$...$$` 與 ```` ```math ````。內容為 LaTeX 原文。
+    pub math: bool,
+    /// mdpdf 擴充：單獨一行的 `<!-- pagebreak -->` 代表換頁。
+    /// 它本身是合法的 HTML 註解，在其他 Markdown 工具中不會顯示。
+    pub page_break: bool,
 }
 
 impl Default for Options {
@@ -30,6 +35,8 @@ impl Default for Options {
         Self {
             gfm: true,
             cjk_emphasis: true,
+            math: true,
+            page_break: true,
         }
     }
 }
@@ -40,6 +47,8 @@ impl Options {
         Self {
             gfm: false,
             cjk_emphasis: false,
+            math: false,
+            page_break: false,
         }
     }
 }

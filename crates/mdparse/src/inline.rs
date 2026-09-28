@@ -66,6 +66,10 @@ enum Kind<'s> {
     Strong,
     Strike,
     FootnoteRef(&'s str),
+    Math {
+        tex: &'s str,
+        display: bool,
+    },
     Link {
         url: Cow<'s, str>,
         title: Option<Cow<'s, str>>,
@@ -234,6 +238,7 @@ impl<'s> Parser<'s, '_> {
             b'`' => self.backticks(),
             b'*' | b'_' => self.delim_run(),
             b'~' if self.options.gfm => self.delim_run(),
+            b'$' if self.options.math && self.math() => {}
             b'[' if self.options.gfm && self.footnote_ref() => {}
             b'[' => {
                 let node = self.text(&self.s[self.pos..self.pos + 1]);
@@ -271,7 +276,7 @@ impl<'s> Parser<'s, '_> {
         let n = rest
             .iter()
             .skip(1)
-            .position(|c| b"\n\\`*_~[]!<&".contains(c))
+            .position(|c| b"\n\\`*_~[]!<&$".contains(c))
             .map_or(rest.len(), |i| i + 1);
         self.pos += n;
         self.text(&self.s[start..self.pos]);
@@ -374,6 +379,49 @@ impl<'s> Parser<'s, '_> {
     }
 
     // ---- 強調 ----
+
+    /// 數學公式 `$...$` 或 `$$...$$`，內容保留 LaTeX 原文。
+    ///
+    /// 行內公式沿用 pandoc 的規則，避免把金額誤判成公式：開頭的 `$` 後面不能是空白，
+    /// 結尾的 `$` 前面不能是空白、後面不能緊接數字。
+    fn math(&mut self) -> bool {
+        let b = self.s.as_bytes();
+        let start = self.pos;
+        let display = b.get(start + 1) == Some(&b'$');
+        let content_start = start + if display { 2 } else { 1 };
+        if !display && b.get(content_start).is_none_or(|c| c.is_ascii_whitespace()) {
+            return false;
+        }
+        let mut i = content_start;
+        let close = loop {
+            match b.get(i) {
+                None => return false,
+                Some(b'\\') => i += 2,
+                Some(b'$') if display => {
+                    if b.get(i + 1) == Some(&b'$') {
+                        break i;
+                    }
+                    i += 1;
+                }
+                Some(b'$') => {
+                    let valid = !b[i - 1].is_ascii_whitespace()
+                        && !b.get(i + 1).is_some_and(u8::is_ascii_digit);
+                    if valid {
+                        break i;
+                    }
+                    i += 1;
+                }
+                Some(_) => i += 1,
+            }
+        };
+        let tex = self.s[content_start..close].trim_matches([' ', '\t', '\n']);
+        if tex.is_empty() {
+            return false;
+        }
+        self.add(ROOT, Kind::Math { tex, display });
+        self.pos = close + if display { 2 } else { 1 };
+        true
+    }
 
     /// `[^label]`：只有對應的腳註定義存在時才成立。
     fn footnote_ref(&mut self) -> bool {
@@ -705,6 +753,10 @@ impl<'s> Parser<'s, '_> {
                 Kind::Strong => Inline::Strong(self.build(id)),
                 Kind::Strike => Inline::Strike(self.build(id)),
                 Kind::FootnoteRef(label) => Inline::FootnoteRef(Cow::Borrowed(label)),
+                Kind::Math { tex, display } => Inline::Math {
+                    tex: Cow::Borrowed(tex),
+                    display,
+                },
                 Kind::Link { url, title } => Inline::Link {
                     url,
                     title,
@@ -886,6 +938,35 @@ mod tests {
         assert_eq!(parse("~a~~"), [text("~a~~")]);
         let commonmark = parse_with("~~a~~", &HashMap::new(), Options::commonmark());
         assert_eq!(commonmark, [text("~~a~~")]);
+    }
+
+    #[test]
+    fn math() {
+        let math = |tex| Math {
+            tex: Cow::Borrowed(tex),
+            display: false,
+        };
+        assert_eq!(
+            parse("$x^2$ 與 $a*b*c$"),
+            [math("x^2"), text(" 與 "), math("a*b*c")]
+        );
+        assert_eq!(
+            parse("$$ \\sum_i x_i $$"),
+            [Math {
+                tex: "\\sum_i x_i".into(),
+                display: true
+            }]
+        );
+        assert_eq!(parse("$\\$5$"), [math("\\$5")]);
+        // 金額不是公式
+        assert_eq!(parse("價格 $5 到 $10"), [text("價格 $5 到 $10")]);
+        assert_eq!(parse("$ x$"), [text("$ x$")]);
+        assert_eq!(parse("\\$x$"), [text("$x$")]);
+        let off = Options {
+            math: false,
+            ..Options::default()
+        };
+        assert_eq!(parse_with("$x$", &HashMap::new(), off), [text("$x$")]);
     }
 
     #[test]

@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 mdparse.workspace = true
+mitex.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

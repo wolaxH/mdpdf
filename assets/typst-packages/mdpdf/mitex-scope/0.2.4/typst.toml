@@ -1,0 +1,10 @@
+# MiTeX 0.2.4 的 specs/ 目錄（Apache-2.0，見 LICENSE），重新包裝成獨立套件，
+# 只提供 LaTeX 指令的 Typst 定義（mitex-scope），不含 WASM 轉換器。
+#
+# 為相容 Typst 0.15 所做的修改：
+# - latex/standard.typ：\KaTeX 原本用已移除的符號 `kai` 拼字，改為 `K a T E X`
+[package]
+name = "mitex-scope"
+version = "0.2.4"
+entrypoint = "mod.typ"
+license = "Apache-2.0"

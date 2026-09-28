@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use typst::diag::{FileError, FileResult, PackageError};
 use typst::foundations::{Bytes, Datetime, Duration};
+use typst::syntax::package::PackageSpec;
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
@@ -49,6 +50,15 @@ impl MdWorld {
             main,
             time: reproducible_time(),
         })
+    }
+}
+
+impl MdWorld {
+    /// 替換主檔內容（例如公式退回原文後重新產生的原始碼），其他檔案的快取一併清除。
+    pub fn set_main_text(&mut self, text: String) {
+        let loader = self.files.loader_mut();
+        loader.main_text = Bytes::from_string(text);
+        self.files.reset();
     }
 }
 
@@ -101,11 +111,23 @@ impl FileLoader for Loader {
         }
         match id.root() {
             VirtualRoot::Project => self.root.load(id.vpath()),
-            VirtualRoot::Package(spec) => {
-                Err(FileError::Package(PackageError::NotFound(spec.clone())))
-            }
+            VirtualRoot::Package(spec) => embedded_package_file(spec, id.vpath().get_with_slash())
+                .ok_or_else(|| FileError::Package(PackageError::NotFound(spec.clone()))),
         }
     }
+}
+
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/embedded_packages.rs"));
+}
+
+/// 內嵌的 Typst 套件（見 `assets/typst-packages/`）。不會從網路下載套件。
+fn embedded_package_file(spec: &PackageSpec, path: &str) -> Option<Bytes> {
+    let spec = spec.to_string();
+    generated::PACKAGE_FILES
+        .iter()
+        .find(|(pkg, file, _)| *pkg == spec && *file == path)
+        .map(|(_, _, data)| Bytes::new(*data))
 }
 
 /// 設定 `SOURCE_DATE_EPOCH` 時使用固定時間，讓輸出可重現。
