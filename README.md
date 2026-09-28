@@ -184,7 +184,8 @@ Generated files: `scripts/gen-tables.py` (HTML entities and Unicode tables) and
 
 ## License
 
-mdpdf's own code is dual-licensed under MIT or Apache-2.0. The binary also contains:
+mdpdf is licensed under the GNU General Public License v3.0 or later; see [`LICENSE`](LICENSE).
+The binary also contains:
 
 - [Typst](https://github.com/typst/typst), Apache-2.0
 - [MiTeX](https://github.com/mitex-rs/mitex) and its LaTeX command definitions, Apache-2.0

@@ -6,7 +6,7 @@ default-members = ["crates/mdpdf"]
 [workspace.package]
 version = "1.0.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
 rust-version = "1.95"
 
 [workspace.dependencies]

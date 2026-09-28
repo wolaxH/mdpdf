@@ -4,4 +4,4 @@
 name = "xarrow"
 version = "0.2.0"
 entrypoint = "lib.typ"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
