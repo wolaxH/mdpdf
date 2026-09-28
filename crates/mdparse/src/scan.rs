@@ -5,6 +5,8 @@
 use std::borrow::Cow;
 
 use crate::ast::LinkDef;
+use crate::entities::ENTITIES;
+use crate::unicode::{PUNCTUATION, WHITESPACE};
 
 pub fn is_ascii_punct(b: u8) -> bool {
     b.is_ascii_punctuation()
@@ -14,14 +16,54 @@ pub fn is_space_or_tab(b: u8) -> bool {
     b == b' ' || b == b'\t'
 }
 
+fn in_ranges(table: &[(char, char)], c: char) -> bool {
+    table
+        .binary_search_by(|&(lo, hi)| {
+            if hi < c {
+                std::cmp::Ordering::Less
+            } else if lo > c {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
+/// Unicode 標點字元：P（標點）或 S（符號）類別。
+pub fn is_unicode_punct(c: char) -> bool {
+    if c.is_ascii() {
+        c.is_ascii_punctuation()
+    } else {
+        in_ranges(PUNCTUATION, c)
+    }
+}
+
+/// 中日韓文字或全形標點（寬鬆強調與軟換行判斷用）。
+pub fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{2E80}'..='\u{9FFF}'      // 部首、標點、假名、注音、CJK 統一表意文字
+        | '\u{AC00}'..='\u{D7AF}'    // 韓文音節
+        | '\u{F900}'..='\u{FAFF}'    // 相容表意文字
+        | '\u{FE30}'..='\u{FE4F}'    // 相容形式（直排標點）
+        | '\u{FF00}'..='\u{FFEF}'    // 全形字元
+        | '\u{20000}'..='\u{3FFFF}'  // 擴充 B 之後
+    )
+}
+
+/// Unicode 空白字元：Zs 類別加上 tab、換行、換頁、歸位。
+pub fn is_unicode_whitespace(c: char) -> bool {
+    in_ranges(WHITESPACE, c)
+}
+
 /// 行尾只剩空白（或已到結尾）。
 pub fn is_blank(s: &str) -> bool {
     s.bytes().all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
 }
 
-/// 處理反斜線跳脫：`\` 後接 ASCII 標點時只保留該標點。
+/// 處理反斜線跳脫與字元參照：`\` 後接 ASCII 標點時只保留該標點，`&...;` 解碼。
 pub fn unescape(s: &str) -> Cow<'_, str> {
-    if !s.contains('\\') {
+    if !s.contains(['\\', '&']) {
         return Cow::Borrowed(s);
     }
     let bytes = s.as_bytes();
@@ -29,26 +71,76 @@ pub fn unescape(s: &str) -> Cow<'_, str> {
     let mut last = 0;
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() && is_ascii_punct(bytes[i + 1]) {
-            out.push_str(&s[last..i]);
-            last = i + 1;
-            i += 2;
-        } else {
-            i += 1;
+        match bytes[i] {
+            b'\\' if bytes.get(i + 1).is_some_and(|&c| is_ascii_punct(c)) => {
+                out.push_str(&s[last..i]);
+                last = i + 1;
+                i += 2;
+            }
+            b'&' => match entity(&s[i..]) {
+                Some((n, decoded)) => {
+                    out.push_str(&s[last..i]);
+                    out.push_str(&decoded);
+                    i += n;
+                    last = i;
+                }
+                None => i += 1,
+            },
+            _ => i += 1,
         }
     }
     out.push_str(&s[last..]);
     Cow::Owned(out)
 }
 
+/// 字元參照：`&name;`、`&#123;`、`&#x1F;`。回傳（消耗長度, 解碼後文字）。
+pub fn entity(s: &str) -> Option<(usize, Cow<'static, str>)> {
+    let b = s.as_bytes();
+    if b.first() != Some(&b'&') {
+        return None;
+    }
+    if b.get(1) == Some(&b'#') {
+        let hex = matches!(b.get(2), Some(b'x' | b'X'));
+        let start = if hex { 3 } else { 2 };
+        let (radix, max) = if hex { (16, 6) } else { (10, 7) };
+        let n = b[start..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit() || (hex && c.is_ascii_hexdigit()))
+            .count();
+        if n == 0 || n > max || b.get(start + n) != Some(&b';') {
+            return None;
+        }
+        let code = u32::from_str_radix(&s[start..start + n], radix).ok()?;
+        // 0、代理字元與超出範圍的碼位一律替換為 U+FFFD
+        let c = char::from_u32(code)
+            .filter(|&c| c != '\0')
+            .unwrap_or('\u{FFFD}');
+        return Some((start + n + 1, Cow::Owned(c.to_string())));
+    }
+    let n = b[1..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count();
+    if !(2..=32).contains(&n) || !b[1].is_ascii_alphabetic() || b.get(1 + n) != Some(&b';') {
+        return None;
+    }
+    let name = &s[1..1 + n];
+    let idx = ENTITIES.binary_search_by(|(k, _)| k.cmp(&name)).ok()?;
+    Some((n + 2, Cow::Borrowed(ENTITIES[idx].1)))
+}
+
 /// 連結標籤正規化：去頭尾空白、內部連續空白縮成一格、case fold。
 pub fn normalize_label(label: &str) -> String {
-    let collapsed = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    let collapsed = label
+        .split([' ', '\t', '\r', '\n'])
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     collapsed.to_lowercase().to_uppercase()
 }
 
 /// 跳過空白與至多一個換行。
-fn skip_spnl(s: &str, mut i: usize) -> usize {
+pub fn skip_spnl(s: &str, mut i: usize) -> usize {
     let b = s.as_bytes();
     while i < b.len() && is_space_or_tab(b[i]) {
         i += 1;
@@ -125,7 +217,8 @@ pub fn link_destination(s: &str) -> Option<(usize, &str)> {
             _ => i += 1,
         }
     }
-    if i == 0 || depth != 0 {
+    // 空的目的地只在 inline 連結 `[a]()` 中合法
+    if (i == 0 && b.first() != Some(&b')')) || depth != 0 {
         return None;
     }
     Some((i, &s[..i]))
@@ -417,6 +510,88 @@ pub fn closing_tag(s: &str) -> Option<usize> {
     }
     let i = skip_ws(b, tag_name(b, 2)?);
     (b.get(i) == Some(&b'>')).then_some(i + 1)
+}
+
+/// 行內原始 HTML：開始／結束標籤、註解、處理指令、宣告或 CDATA。回傳消耗長度。
+pub fn inline_html(s: &str) -> Option<usize> {
+    let find_end = |from: usize, end: &str| s[from..].find(end).map(|i| from + i + end.len());
+    if let Some(rest) = s.strip_prefix("<!--") {
+        // `<!-->` 與 `<!--->` 也是合法（空）註解
+        if rest.starts_with('>') {
+            return Some(5);
+        }
+        if rest.starts_with("->") {
+            return Some(6);
+        }
+        return find_end(4, "-->");
+    }
+    if s.starts_with("<?") {
+        return find_end(2, "?>");
+    }
+    if s.starts_with("<![CDATA[") {
+        return find_end(9, "]]>");
+    }
+    if s.starts_with("<!") && s.as_bytes().get(2).is_some_and(u8::is_ascii_alphabetic) {
+        return find_end(2, ">");
+    }
+    open_tag(s).or_else(|| closing_tag(s))
+}
+
+/// URI autolink `<scheme:...>`，回傳（消耗長度, URI）。
+pub fn autolink_uri(s: &str) -> Option<(usize, &str)> {
+    let b = s.as_bytes();
+    if b.first() != Some(&b'<') || !b.get(1)?.is_ascii_alphabetic() {
+        return None;
+    }
+    let scheme = b[1..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'.' | b'-'))
+        .count();
+    if !(2..=32).contains(&scheme) || b.get(1 + scheme) != Some(&b':') {
+        return None;
+    }
+    let mut i = 2 + scheme;
+    while i < b.len() {
+        match b[i] {
+            b'>' => return Some((i + 1, &s[1..i])),
+            b'<' => return None,
+            c if c <= b' ' => return None,
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Email autolink `<user@host>`，回傳（消耗長度, 位址）。
+pub fn autolink_email(s: &str) -> Option<(usize, &str)> {
+    let b = s.as_bytes();
+    if b.first() != Some(&b'<') {
+        return None;
+    }
+    let local = b[1..]
+        .iter()
+        .take_while(|&&c| c.is_ascii_alphanumeric() || b".!#$%&'*+/=?^_`{|}~-".contains(&c))
+        .count();
+    if local == 0 || b.get(1 + local) != Some(&b'@') {
+        return None;
+    }
+    let mut i = 2 + local;
+    loop {
+        // 網域標籤：英數開頭與結尾，中間可有連字號，最長 63
+        let label = b[i..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || **c == b'-')
+            .count();
+        if label == 0 || label > 63 || b[i] == b'-' || b[i + label - 1] == b'-' {
+            return None;
+        }
+        i += label;
+        match b.get(i) {
+            Some(b'.') => i += 1,
+            Some(b'>') => return Some((i + 1, &s[1..i])),
+            _ => return None,
+        }
+    }
 }
 
 #[cfg(test)]

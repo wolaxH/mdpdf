@@ -14,7 +14,18 @@ fn render(name: &str) -> mdpdf::Pdf {
         ..Default::default()
     })
     .unwrap();
-    let world = MdWorld::new(dir, "main.typ", md2typst::convert(&markdown), fonts).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let options = md2typst::Options {
+        base_dir: Some(dir.clone()),
+        ..Default::default()
+    };
+    let converted = md2typst::convert(&markdown, &options);
+    assert!(
+        converted.warnings.is_empty(),
+        "codegen 警告：{:#?}",
+        converted.warnings
+    );
+    let world = MdWorld::new(&dir.join("main.typ"), converted.source, fonts).unwrap();
 
     let result = compile_pdf(&world);
     let pdf = result
@@ -46,5 +57,19 @@ fn m0_demo_renders_with_embedded_cjk_font() {
 #[cfg(feature = "embed-cjk")]
 fn m1_blocks_renders() {
     let pdf = render("m1-blocks.md");
+    assert!(pdf.pages >= 1);
+}
+
+#[test]
+#[cfg(feature = "embed-cjk")]
+fn m2_inline_renders_with_images() {
+    let pdf = render("m2-inline.md");
+    assert!(pdf.pages >= 1);
+}
+
+#[test]
+#[cfg(feature = "embed-cjk")]
+fn m3_gfm_renders() {
+    let pdf = render("m3-gfm.md");
     assert!(pdf.pages >= 1);
 }

@@ -1,0 +1,140 @@
+[
+ {
+  "markdown": "| foo | bar |\n| --- | --- |\n| baz | bim |\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>foo</th>\n<th>bar</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>baz</td>\n<td>bim</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3326
+ },
+ {
+  "markdown": "| abc | defghi |\n:-: | -----------:\nbar | baz\n",
+  "html": "<table>\n<thead>\n<tr>\n<th align=\"center\">abc</th>\n<th align=\"right\">defghi</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"center\">bar</td>\n<td align=\"right\">baz</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3350
+ },
+ {
+  "markdown": "| f\\|oo  |\n| ------ |\n| b `\\|` az |\n| b **\\|** im |\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>f|oo</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>b <code>|</code> az</td>\n</tr>\n<tr>\n<td>b <strong>|</strong> im</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3374
+ },
+ {
+  "markdown": "| abc | def |\n| --- | --- |\n| bar | baz |\n> bar\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>abc</th>\n<th>def</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>bar</td>\n<td>baz</td>\n</tr>\n</tbody>\n</table>\n<blockquote>\n<p>bar</p>\n</blockquote>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3400
+ },
+ {
+  "markdown": "| abc | def |\n| --- | --- |\n| bar | baz |\nbar\n\nbar\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>abc</th>\n<th>def</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>bar</td>\n<td>baz</td>\n</tr>\n<tr>\n<td>bar</td>\n<td></td>\n</tr>\n</tbody>\n</table>\n<p>bar</p>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3425
+ },
+ {
+  "markdown": "| abc | def |\n| --- |\n| bar |\n",
+  "html": "<p>| abc | def |\n| --- |\n| bar |</p>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3457
+ },
+ {
+  "markdown": "| abc | def |\n| --- | --- |\n| bar |\n| bar | baz | boo |\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>abc</th>\n<th>def</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>bar</td>\n<td></td>\n</tr>\n<tr>\n<td>bar</td>\n<td>baz</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3471
+ },
+ {
+  "markdown": "| abc | def |\n| --- | --- |\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>abc</th>\n<th>def</th>\n</tr>\n</thead>\n</table>\n",
+  "section": "spec: Tables (extension)",
+  "line": 3499
+ },
+ {
+  "markdown": "- [ ] foo\n- [x] bar\n",
+  "html": "<ul>\n<li><input disabled=\"\" type=\"checkbox\"> foo</li>\n<li><input checked=\"\" disabled=\"\" type=\"checkbox\"> bar</li>\n</ul>\n",
+  "section": "spec: Task list items (extension)",
+  "line": 5108
+ },
+ {
+  "markdown": "- [x] foo\n  - [ ] bar\n  - [x] baz\n- [ ] bim\n",
+  "html": "<ul>\n<li><input checked=\"\" disabled=\"\" type=\"checkbox\"> foo\n<ul>\n<li><input disabled=\"\" type=\"checkbox\"> bar</li>\n<li><input checked=\"\" disabled=\"\" type=\"checkbox\"> baz</li>\n</ul>\n</li>\n<li><input disabled=\"\" type=\"checkbox\"> bim</li>\n</ul>\n",
+  "section": "spec: Task list items (extension)",
+  "line": 5120
+ },
+ {
+  "markdown": "~~Hi~~ Hello, world!\n",
+  "html": "<p><del>Hi</del> Hello, world!</p>\n",
+  "section": "spec: Strikethrough (extension)",
+  "line": 7714
+ },
+ {
+  "markdown": "This ~~has a\n\nnew paragraph~~.\n",
+  "html": "<p>This ~~has a</p>\n<p>new paragraph~~.</p>\n",
+  "section": "spec: Strikethrough (extension)",
+  "line": 7723
+ },
+ {
+  "markdown": "| abc | def |\n| --- | --- |\n| ghi | jkl |\n| mno | pqr |\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>abc</th>\n<th>def</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>ghi</td>\n<td>jkl</td>\n</tr>\n<tr>\n<td>mno</td>\n<td>pqr</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "extensions: Tables",
+  "line": 13
+ },
+ {
+  "markdown": "Hello!\n\n| _abc_ | セン |\n| ----- | ---- |\n| 1. Block elements inside cells don't work. | |\n| But _**inline elements do**_. | x |\n\nHi!\n",
+  "html": "<p>Hello!</p>\n<table>\n<thead>\n<tr>\n<th><em>abc</em></th>\n<th>セン</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1. Block elements inside cells don't work.</td>\n<td></td>\n</tr>\n<tr>\n<td>But <em><strong>inline elements do</strong></em>.</td>\n<td>x</td>\n</tr>\n</tbody>\n</table>\n<p>Hi!</p>\n",
+  "section": "extensions: Tables",
+  "line": 43
+ },
+ {
+  "markdown": "| Not enough table | to be considered table |\n\n| Not enough table | to be considered table |\n| Not enough table | to be considered table |\n\n| Just enough table | to be considered table |\n| ----------------- | ---------------------- |\n\n| ---- | --- |\n\n|x|\n|-|\n\n| xyz |\n| --- |\n",
+  "html": "<p>| Not enough table | to be considered table |</p>\n<p>| Not enough table | to be considered table |\n| Not enough table | to be considered table |</p>\n<table>\n<thead>\n<tr>\n<th>Just enough table</th>\n<th>to be considered table</th>\n</tr>\n</thead>\n</table>\n<p>| ---- | --- |</p>\n<table>\n<thead>\n<tr>\n<th>x</th>\n</tr>\n</thead>\n</table>\n<table>\n<thead>\n<tr>\n<th>xyz</th>\n</tr>\n</thead>\n</table>\n",
+  "section": "extensions: Tables",
+  "line": 77
+ },
+ {
+  "markdown": "abc | def\n--- | ---\nxyz | ghi\n",
+  "html": "<table>\n<thead>\n<tr>\n<th>abc</th>\n<th>def</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>xyz</td>\n<td>ghi</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "extensions: Tables",
+  "line": 124
+ },
+ {
+  "markdown": "Hello!\n\n| _abc_ | セン |\n| ----- | ---- |\n| this row has a space at the end | | \n| But _**inline elements do**_. | x |\n\nHi!\n",
+  "html": "<p>Hello!</p>\n<table>\n<thead>\n<tr>\n<th><em>abc</em></th>\n<th>セン</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>this row has a space at the end</td>\n<td></td>\n</tr>\n<tr>\n<td>But <em><strong>inline elements do</strong></em>.</td>\n<td>x</td>\n</tr>\n</tbody>\n</table>\n<p>Hi!</p>\n",
+  "section": "extensions: Tables",
+  "line": 148
+ },
+ {
+  "markdown": "aaa | bbb | ccc | ddd | eee\n:-- | --- | :-: | --- | --:\nfff | ggg | hhh | iii | jjj\n",
+  "html": "<table>\n<thead>\n<tr>\n<th align=\"left\">aaa</th>\n<th>bbb</th>\n<th align=\"center\">ccc</th>\n<th>ddd</th>\n<th align=\"right\">eee</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"left\">fff</td>\n<td>ggg</td>\n<td align=\"center\">hhh</td>\n<td>iii</td>\n<td align=\"right\">jjj</td>\n</tr>\n</tbody>\n</table>\n",
+  "section": "extensions: Tables",
+  "line": 182
+ },
+ {
+  "markdown": "A proper ~strikethrough~.\n",
+  "html": "<p>A proper <del>strikethrough</del>.</p>\n",
+  "section": "extensions: Strikethroughs",
+  "line": 506
+ },
+ {
+  "markdown": "These are ~not strikethroughs.\n\nNo, they are not~\n\nThis ~is ~ legit~ isn't ~ legit.\n\nThis is not ~~~~~one~~~~~ huge strikethrough.\n\n~one~ ~~two~~ ~~~three~~~\n\nNo ~mismatch~~\n",
+  "html": "<p>These are ~not strikethroughs.</p>\n<p>No, they are not~</p>\n<p>This <del>is ~ legit</del> isn't ~ legit.</p>\n<p>This is not ~~~~~one~~~~~ huge strikethrough.</p>\n<p><del>one</del> <del>two</del> ~~~three~~~</p>\n<p>No ~mismatch~~</p>\n",
+  "section": "extensions: Strikethroughs",
+  "line": 514
+ },
+ {
+  "markdown": "- [ ] foo\n- [x] bar\n",
+  "html": "<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> foo</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> bar</li>\n</ul>\n",
+  "section": "extensions: Task lists",
+  "line": 837
+ },
+ {
+  "markdown": "- [x] foo\n  - [ ] bar\n  - [x] baz\n- [ ] bim\n\nShow a regular (non task) list to show that it has the same structure\n- [@] foo\n  - [@] bar\n  - [@] baz\n- [@] bim\n",
+  "html": "<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> foo\n<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> bar</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> baz</li>\n</ul>\n</li>\n<li><input type=\"checkbox\" disabled=\"\" /> bim</li>\n</ul>\n<p>Show a regular (non task) list to show that it has the same structure</p>\n<ul>\n<li>[@] foo\n<ul>\n<li>[@] bar</li>\n<li>[@] baz</li>\n</ul>\n</li>\n<li>[@] bim</li>\n</ul>\n",
+  "section": "extensions: Task lists",
+  "line": 854
+ },
+ {
+  "markdown": "- [x] foo\n    - [ ] bar\n    - [x] baz\n- [ ] bim\n\nShow a regular (non task) list to show that it has the same structure\n- [@] foo\n    - [@] bar\n    - [@] baz\n- [@] bim\n",
+  "html": "<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> foo\n<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> bar</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> baz</li>\n</ul>\n</li>\n<li><input type=\"checkbox\" disabled=\"\" /> bim</li>\n</ul>\n<p>Show a regular (non task) list to show that it has the same structure</p>\n<ul>\n<li>[@] foo\n<ul>\n<li>[@] bar</li>\n<li>[@] baz</li>\n</ul>\n</li>\n<li>[@] bim</li>\n</ul>\n",
+  "section": "extensions: Task lists",
+  "line": 889
+ }
+]

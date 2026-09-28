@@ -1,7 +1,8 @@
 //! 記憶體中的 Typst [`World`]。
 //!
-//! 主檔（codegen 產生的 Typst 原始碼）只存在記憶體；其餘檔案（圖片等）以
-//! Markdown 所在目錄為根目錄從磁碟讀取。不支援 Typst 套件。
+//! 主檔（codegen 產生的 Typst 原始碼）只存在記憶體，虛擬路徑放在 Markdown 所在目錄；
+//! 其餘檔案（圖片等）從磁碟讀取。專案根目錄設為檔案系統的 `/`，因此 Markdown 裡
+//! `../img.png` 或絕對路徑的圖片都能正常解析。不支援 Typst 套件。
 //!
 //! typst 的 API 在版本間變動頻繁，所有與它直接互動的程式集中在這個模組。
 
@@ -28,17 +29,12 @@ pub struct MdWorld {
 }
 
 impl MdWorld {
-    /// 建立 World。
-    ///
-    /// `root` 是相對路徑的基準目錄，`main_name` 是主檔在錯誤訊息中顯示的名稱。
-    pub fn new(
-        root: PathBuf,
-        main_name: &str,
-        main_text: String,
-        fonts: FontStore,
-    ) -> Result<Self> {
-        let vpath = VirtualPath::new(format!("/{main_name}"))
-            .map_err(|err| anyhow!("無效的檔名 {main_name:?}：{err}"))?;
+    /// 建立 World。`main_path` 是主檔的絕對路徑（不必真的存在），
+    /// 決定相對路徑的基準目錄與錯誤訊息中顯示的名稱。
+    pub fn new(main_path: &Path, main_text: String, fonts: FontStore) -> Result<Self> {
+        let root = PathBuf::from("/");
+        let vpath = VirtualPath::virtualize(&root, main_path)
+            .map_err(|err| anyhow!("無效的路徑 {}：{err}", main_path.display()))?;
         let main = RootedPath::new(VirtualRoot::Project, vpath).intern();
         let loader = Loader {
             root: FsRoot::new(root),
@@ -53,11 +49,6 @@ impl MdWorld {
             main,
             time: reproducible_time(),
         })
-    }
-
-    /// 相對路徑的基準目錄。
-    pub fn root(&self) -> &Path {
-        self.files.loader().root.path()
     }
 }
 
@@ -93,7 +84,7 @@ impl World for MdWorld {
 
 impl DiagnosticWorld for MdWorld {
     fn name(&self, id: FileId) -> String {
-        id.vpath().get_without_slash().to_string()
+        id.vpath().get_with_slash().to_string()
     }
 }
 

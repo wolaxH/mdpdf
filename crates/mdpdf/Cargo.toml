@@ -13,6 +13,7 @@ embed-cjk = ["dep:zstd"]
 
 [dependencies]
 md2typst.workspace = true
+mdparse.workspace = true
 typst.workspace = true
 typst-pdf.workspace = true
 typst-layout.workspace = true

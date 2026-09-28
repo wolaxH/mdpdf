@@ -33,6 +33,14 @@ struct Cli {
     /// 不讀取系統字型
     #[arg(long)]
     no_system_fonts: bool,
+
+    /// 警告視為錯誤（例如找不到圖片）
+    #[arg(long)]
+    strict: bool,
+
+    /// 關閉 CJK 寬鬆強調，完全依照 CommonMark 規則判斷 `**` 能否成立
+    #[arg(long)]
+    no_cjk_emphasis: bool,
 }
 
 fn main() -> ExitCode {
@@ -47,7 +55,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     let stdin = cli.input == Path::new("-");
-    let (markdown, root, name) = if stdin {
+    let (markdown, dir, name) = if stdin {
         let mut text = String::new();
         io::stdin()
             .read_to_string(&mut text)
@@ -56,7 +64,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     } else {
         let text = fs::read_to_string(&cli.input)
             .with_context(|| format!("無法讀取 {}", cli.input.display()))?;
-        let root = cli
+        let dir = cli
             .input
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -67,8 +75,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        (text, root.to_path_buf(), name)
+        (text, dir.to_path_buf(), name)
     };
+    let dir = dir
+        .canonicalize()
+        .with_context(|| format!("無法解析目錄 {}", dir.display()))?;
 
     let output = match (cli.output, stdin) {
         (Some(path), _) => path,
@@ -76,16 +87,35 @@ fn run(cli: Cli) -> Result<ExitCode> {
         (None, true) => bail!("從 stdin 讀取時請用 -o 指定輸出路徑"),
     };
 
-    let typst_source = md2typst::convert(&markdown);
+    let converted = md2typst::convert(
+        &markdown,
+        &md2typst::Options {
+            base_dir: Some(dir.clone()),
+            parse: mdparse::Options {
+                cjk_emphasis: !cli.no_cjk_emphasis,
+                ..Default::default()
+            },
+        },
+    );
+    for warning in &converted.warnings {
+        eprintln!("警告：{name}:{}：{}", warning.line, warning.message);
+    }
+    if cli.strict && !converted.warnings.is_empty() {
+        bail!(
+            "有 {} 個警告，--strict 模式下停止",
+            converted.warnings.len()
+        );
+    }
     if let Some(path) = &cli.emit_typst {
-        fs::write(path, &typst_source).with_context(|| format!("無法寫入 {}", path.display()))?;
+        fs::write(path, &converted.source)
+            .with_context(|| format!("無法寫入 {}", path.display()))?;
     }
 
     let fonts = mdpdf::fonts::load(&FontOptions {
         font_paths: cli.font_path,
         system_fonts: !cli.no_system_fonts,
     })?;
-    let world = MdWorld::new(root, &format!("{name}.typ"), typst_source, fonts)?;
+    let world = MdWorld::new(&dir.join(format!("{name}.typ")), converted.source, fonts)?;
 
     let result = compile_pdf(&world);
     print_diagnostics(&world, &result.warnings)?;

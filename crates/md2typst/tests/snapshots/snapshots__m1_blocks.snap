@@ -1,10 +1,10 @@
 ---
 source: crates/md2typst/tests/snapshots.rs
-expression: "md2typst::body(&fixture(\"m1-blocks.md\"))"
+expression: "md2typst::body(&fixture(\"m1-blocks.md\"), &Default::default()).source"
 ---
 #heading(level: 1)[#"季度報告"]
 
-#"本報告說明第三季的**進度**與風險。第二行接續同一段落，English words continue here."
+#"本報告說明第三季的"#strong[#"進度"]#"與風險。第二行接續同一段落，English words continue here."
 
 #heading(level: 2)[#"清單"]
 
@@ -65,4 +65,4 @@ expression: "md2typst::body(&fixture(\"m1-blocks.md\"))"
 
 #heading(level: 2)[#"Setext 標題"]
 
-#"最後一段：Typst 標記 #set、$x$、@ref、<label> 與 *星號* 原樣輸出。"
+#"最後一段：Typst 標記 #set、$x$、@ref、Vec<T> 與 *星號* 原樣輸出。"

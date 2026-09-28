@@ -1,3 +1,4 @@
 /target
 # 內嵌字型體積大，由 scripts/fetch-fonts.sh 下載
 /assets/fonts/*.otf
+/examples/*.pdf

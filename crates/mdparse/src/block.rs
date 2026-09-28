@@ -7,16 +7,17 @@
 //! 解析期間節點放在 arena（`Vec<Node>`）中，結束後再轉成 [`crate::ast`] 的樹。
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Block, BlockKind, Document, LinkDef, ListItem, Span};
-use crate::{inline, scan};
+use crate::ast::{Align, Block, BlockKind, Cell, Document, LinkDef, ListItem, Span};
+use crate::inline::Ctx;
+use crate::{Options, inline, scan};
 
 const CODE_INDENT: usize = 4;
 const ROOT: usize = 0;
 
-pub fn parse(input: &str) -> Document<'_> {
-    let mut parser = Parser::new(input);
+pub fn parse(input: &str, options: Options) -> Document<'_> {
+    let mut parser = Parser::new(input, options);
     let mut rest = input;
     while !rest.is_empty() {
         let end = rest.find(['\n', '\r']).unwrap_or(rest.len());
@@ -60,26 +61,43 @@ struct Fence {
 enum Kind {
     Document,
     BlockQuote,
-    List { data: ListData, tight: bool },
-    Item { data: ListData },
+    List {
+        data: ListData,
+        tight: bool,
+    },
+    Item {
+        data: ListData,
+    },
     Paragraph,
-    Heading { level: u8 },
+    Heading {
+        level: u8,
+    },
     ThematicBreak,
-    CodeBlock { fence: Option<Fence> },
-    Html { kind: u8 },
+    CodeBlock {
+        fence: Option<Fence>,
+    },
+    Html {
+        kind: u8,
+    },
+    /// GFM 表格。`lines[0]` 是表頭，`lines[1]` 是分隔列（略過），其後為資料列。
+    Table {
+        align: Vec<Align>,
+    },
+    /// 腳註定義，標籤存在 `content`。
+    FootnoteDef,
 }
 
 impl Kind {
     fn accepts_lines(&self) -> bool {
         matches!(
             self,
-            Kind::Paragraph | Kind::CodeBlock { .. } | Kind::Html { .. }
+            Kind::Paragraph | Kind::CodeBlock { .. } | Kind::Html { .. } | Kind::Table { .. }
         )
     }
 
     fn can_contain(&self, child: &Kind) -> bool {
         match self {
-            Kind::Document | Kind::BlockQuote | Kind::Item { .. } => {
+            Kind::Document | Kind::BlockQuote | Kind::Item { .. } | Kind::FootnoteDef => {
                 !matches!(child, Kind::Item { .. })
             }
             Kind::List { .. } => matches!(child, Kind::Item { .. }),
@@ -104,7 +122,7 @@ struct Node<'a> {
     start: Span,
     end_line: u32,
     lines: Vec<Line<'a>>,
-    /// 段落與標題的最終文字內容。
+    /// 段落與標題的最終文字內容；腳註定義的標籤。
     content: Cow<'a, str>,
     /// 程式碼區塊的語言。
     lang: Option<Cow<'a, str>>,
@@ -125,8 +143,11 @@ enum Start {
 
 struct Parser<'a> {
     input: &'a str,
+    options: Options,
     nodes: Vec<Node<'a>>,
     link_defs: HashMap<String, LinkDef<'a>>,
+    /// 已定義的腳註標籤（正規化後）。
+    footnotes: HashSet<String>,
 
     tip: usize,
     old_tip: usize,
@@ -146,12 +167,14 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a str) -> Self {
+    fn new(input: &'a str, options: Options) -> Self {
         let root = Node::new(Kind::Document, ROOT, Span { line: 1, col: 1 });
         Self {
             input,
+            options,
             nodes: vec![root],
             link_defs: HashMap::new(),
+            footnotes: HashSet::new(),
             tip: ROOT,
             old_tip: ROOT,
             last_matched: ROOT,
@@ -312,15 +335,17 @@ impl<'a> Parser<'a> {
         self.last_matched = container;
 
         // 2. 尋找新區塊的開頭。
+        // 段落與表格即使延續成功，這一行仍可能開始新區塊
         let mut matched_leaf = {
             let kind = &self.nodes[container].kind;
-            !matches!(kind, Kind::Paragraph) && kind.accepts_lines()
+            !matches!(kind, Kind::Paragraph | Kind::Table { .. }) && kind.accepts_lines()
         };
+        let gfm = self.options.gfm;
         while !matched_leaf {
             self.find_next_nonspace();
-            let maybe_special = self
-                .peek(self.next_nonspace)
-                .is_some_and(|c| b"#`~*+_=<>-".contains(&c) || c.is_ascii_digit());
+            let maybe_special = self.peek(self.next_nonspace).is_some_and(|c| {
+                b"#`~*+_=<>-".contains(&c) || c.is_ascii_digit() || (gfm && b"|:[".contains(&c))
+            });
             if !self.indented && !maybe_special {
                 self.advance_next_nonspace();
                 break;
@@ -422,12 +447,22 @@ impl<'a> Parser<'a> {
                     Continue::Matched
                 }
             }
-            Kind::Paragraph => {
+            Kind::Paragraph | Kind::Table { .. } => {
                 if self.blank {
                     Continue::Failed
                 } else {
                     Continue::Matched
                 }
+            }
+            Kind::FootnoteDef => {
+                if self.indent >= CODE_INDENT {
+                    self.advance_offset(CODE_INDENT, true);
+                } else if self.blank {
+                    self.advance_next_nonspace();
+                } else {
+                    return Continue::Failed;
+                }
+                Continue::Matched
             }
         }
     }
@@ -485,6 +520,49 @@ impl<'a> Parser<'a> {
                 return Start::Leaf;
             }
 
+            // 腳註定義 `[^label]:`（不能打斷段落）
+            if self.options.gfm
+                && !in_paragraph
+                && let Some(label) = footnote_def_label(rest)
+            {
+                self.advance_next_nonspace();
+                self.close_unmatched_blocks();
+                let id = self.add_child(Kind::FootnoteDef, self.next_nonspace);
+                self.advance_offset(label.len() + 4, false);
+                self.nodes[id].content = Cow::Borrowed(label);
+                self.footnotes.insert(scan::normalize_label(label));
+                return Start::Container;
+            }
+
+            // 表格：段落的最後一行是表頭，這一行是分隔列，且兩者欄數相同
+            if self.options.gfm
+                && in_paragraph
+                && let Some(align) = table_delimiter_row(rest)
+                && let Some(&header) = self.nodes[container].lines.last()
+                && split_row(header.text).len() == align.len()
+            {
+                self.close_unmatched_blocks();
+                let mut lines = std::mem::take(&mut self.nodes[container].lines);
+                lines.pop();
+                let table = if lines.is_empty() {
+                    self.nodes[container].kind = Kind::Table { align };
+                    container
+                } else {
+                    // 表頭之前的行仍是段落
+                    self.nodes[container].lines = lines;
+                    self.finalize(container, self.line_number - 2);
+                    let id = self.add_child(Kind::Table { align }, 0);
+                    self.nodes[id].start = Span {
+                        line: self.line_number - 1,
+                        col: 1,
+                    };
+                    id
+                };
+                self.nodes[table].lines = vec![header];
+                self.advance_to_end();
+                return Start::Leaf;
+            }
+
             // setext 標題
             if in_paragraph && let Some(level) = setext_underline(rest) {
                 self.close_unmatched_blocks();
@@ -526,8 +604,14 @@ impl<'a> Parser<'a> {
             return Start::Container;
         }
 
-        // 縮排程式碼：不能打斷段落
-        if self.indented && !matches!(self.nodes[self.tip].kind, Kind::Paragraph) && !self.blank {
+        // 縮排程式碼：不能打斷段落或表格
+        if self.indented
+            && !matches!(
+                self.nodes[self.tip].kind,
+                Kind::Paragraph | Kind::Table { .. }
+            )
+            && !self.blank
+        {
             self.advance_offset(CODE_INDENT, true);
             self.close_unmatched_blocks();
             self.add_child(Kind::CodeBlock { fence: None }, self.offset);
@@ -753,7 +837,12 @@ impl<'a> Parser<'a> {
 
         let mut nodes: Vec<Option<Node<'a>>> = self.nodes.into_iter().map(Some).collect();
         let children = nodes[ROOT].take().unwrap().children;
-        let blocks = build_blocks(&mut nodes, &children);
+        let ctx = Ctx {
+            links: &self.link_defs,
+            footnotes: &self.footnotes,
+            options: self.options,
+        };
+        let blocks = build_blocks(&mut nodes, &children, &ctx);
         Document {
             blocks,
             link_defs: self.link_defs,
@@ -777,32 +866,30 @@ impl<'a> Node<'a> {
     }
 }
 
-fn build_blocks<'a>(nodes: &mut [Option<Node<'a>>], ids: &[usize]) -> Vec<Block<'a>> {
-    ids.iter().map(|&id| build_block(nodes, id)).collect()
+fn build_blocks<'a>(
+    nodes: &mut [Option<Node<'a>>],
+    ids: &[usize],
+    ctx: &Ctx<'_, 'a>,
+) -> Vec<Block<'a>> {
+    ids.iter().map(|&id| build_block(nodes, id, ctx)).collect()
 }
 
-fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize) -> Block<'a> {
+fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>) -> Block<'a> {
     let node = nodes[id].take().expect("每個節點只會被建構一次");
     let kind = match node.kind {
-        Kind::Paragraph => BlockKind::Paragraph(inline::parse(node.content)),
+        Kind::Paragraph => BlockKind::Paragraph(inline::parse(node.content, ctx)),
         Kind::Heading { level } => BlockKind::Heading {
             level,
-            content: inline::parse(node.content),
+            content: inline::parse(node.content, ctx),
         },
-        Kind::BlockQuote => BlockKind::BlockQuote(build_blocks(nodes, &node.children)),
+        Kind::BlockQuote => BlockKind::BlockQuote(build_blocks(nodes, &node.children, ctx)),
         Kind::List { data, tight } => BlockKind::List {
             ordered: matches!(data.ty, ListType::Ordered(_)).then_some(data.start),
             tight,
             items: node
                 .children
                 .iter()
-                .map(|&item| {
-                    let item_node = nodes[item].take().unwrap();
-                    ListItem {
-                        blocks: build_blocks(nodes, &item_node.children),
-                        span: item_node.start,
-                    }
-                })
+                .map(|&item| build_item(nodes, item, ctx))
                 .collect(),
         },
         Kind::CodeBlock { .. } => BlockKind::CodeBlock {
@@ -811,12 +898,141 @@ fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize) -> Block<'a> {
         },
         Kind::Html { .. } => BlockKind::Html(node.content),
         Kind::ThematicBreak => BlockKind::ThematicBreak,
+        Kind::Table { align } => {
+            let columns = align.len();
+            let mut row = |line: &Line<'a>| -> Vec<Cell<'a>> {
+                let mut cells: Vec<Cell<'a>> = split_row(line.text)
+                    .into_iter()
+                    .take(columns)
+                    .map(|c| inline::parse(c, ctx))
+                    .collect();
+                cells.resize_with(columns, Vec::new);
+                cells
+            };
+            let head = row(&node.lines[0]);
+            let rows = node.lines[2..].iter().map(&mut row).collect();
+            BlockKind::Table { align, head, rows }
+        }
+        Kind::FootnoteDef => BlockKind::FootnoteDef {
+            label: node.content,
+            blocks: build_blocks(nodes, &node.children, ctx),
+        },
         Kind::Item { .. } | Kind::Document => unreachable!("清單項目由清單建構"),
     };
     Block {
         kind,
         span: node.start,
     }
+}
+
+fn build_item<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>) -> ListItem<'a> {
+    let item = nodes[id].take().unwrap();
+    let mut task = None;
+    // 任務清單：第一個子區塊是以 `[ ]`、`[x]` 開頭的段落
+    if ctx.options.gfm
+        && let Some(&first) = item.children.first()
+        && let Some(para) = nodes[first].as_mut()
+        && matches!(para.kind, Kind::Paragraph)
+        && let Some((checked, skip)) = task_marker(&para.content)
+    {
+        task = Some(checked);
+        para.content = match std::mem::take(&mut para.content) {
+            Cow::Borrowed(s) => Cow::Borrowed(&s[skip..]),
+            Cow::Owned(s) => Cow::Owned(s[skip..].to_string()),
+        };
+    }
+    ListItem {
+        blocks: build_blocks(nodes, &item.children, ctx),
+        span: item.start,
+        task,
+    }
+}
+
+/// `[ ] `、`[x] `：回傳（是否勾選, 標記與其後空白的長度）。
+fn task_marker(s: &str) -> Option<(bool, usize)> {
+    let b = s.as_bytes();
+    if b.len() < 4 || b[0] != b'[' || b[2] != b']' || !scan::is_space_or_tab(b[3]) {
+        return None;
+    }
+    let checked = match b[1] {
+        b' ' | b'\t' => false,
+        b'x' | b'X' => true,
+        _ => return None,
+    };
+    let skip = 3 + b[3..]
+        .iter()
+        .take_while(|&&c| scan::is_space_or_tab(c))
+        .count();
+    Some((checked, skip))
+}
+
+/// `[^label]:` 的標籤。標籤不能含空白或方括號。
+fn footnote_def_label(rest: &str) -> Option<&str> {
+    let inner = rest.strip_prefix("[^")?;
+    let end = inner.find(']')?;
+    let label = &inner[..end];
+    let valid = !label.is_empty() && !label.contains(|c: char| c.is_whitespace() || c == '[');
+    (valid && inner[end + 1..].starts_with(':')).then_some(label)
+}
+
+/// 表格分隔列，例如 `| :-- | :-: | --: |`。必須含有 `|`。
+fn table_delimiter_row(rest: &str) -> Option<Vec<Align>> {
+    if !rest.contains('|') {
+        return None;
+    }
+    split_row(rest)
+        .iter()
+        .map(|cell| {
+            let left = cell.starts_with(':');
+            let right = cell.len() > 1 && cell.ends_with(':');
+            let dashes = &cell[usize::from(left)..cell.len() - usize::from(right)];
+            if dashes.is_empty() || !dashes.bytes().all(|c| c == b'-') {
+                return None;
+            }
+            Some(match (left, right) {
+                (true, true) => Align::Center,
+                (true, false) => Align::Left,
+                (false, true) => Align::Right,
+                (false, false) => Align::None,
+            })
+        })
+        .collect()
+}
+
+/// 把表格的一列拆成儲存格：去掉首尾的 `|`，以未跳脫的 `|` 分隔，`\|` 還原為 `|`。
+fn split_row(line: &str) -> Vec<Cow<'_, str>> {
+    let s = line.trim_matches([' ', '\t']);
+    let s = s.strip_prefix('|').unwrap_or(s);
+    let b = s.as_bytes();
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'|' => {
+                cells.push(&s[start..i]);
+                i += 1;
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    // 結尾沒有 `|` 時，最後一段也是儲存格
+    if start < b.len() || cells.is_empty() {
+        cells.push(&s[start.min(b.len())..]);
+    }
+    cells
+        .into_iter()
+        .map(|cell| {
+            let cell = cell.trim_matches([' ', '\t']);
+            if cell.contains("\\|") {
+                Cow::Owned(cell.replace("\\|", "|"))
+            } else {
+                Cow::Borrowed(cell)
+            }
+        })
+        .collect()
 }
 
 fn parse_link_defs(s: &str) -> (usize, Vec<(String, LinkDef<'_>)>) {

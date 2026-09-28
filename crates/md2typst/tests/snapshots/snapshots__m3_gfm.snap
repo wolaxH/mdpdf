@@ -1,0 +1,56 @@
+---
+source: crates/md2typst/tests/snapshots.rs
+expression: "md2typst::body(&fixture(\"m3-gfm.md\"), &Default::default()).source"
+---
+#heading(level: 1)[#"GFM 擴充"]
+
+#heading(level: 2)[#"表格"]
+
+#table(
+  columns: 4,
+  align: (left, left, center, right),
+  table.header([#"里程碑"], [#"內容"], [#"狀態"], [#"工時"], ),
+  [#"M0"], [#"骨架與內嵌字型"], [#strike[#"進行中"]#" 完成"], [#"1 週"], 
+  [#"M1"], [#"區塊解析"], [#strong[#"完成"]], [#"2 週"], 
+  [#"M2"], [#"行內解析、"#raw("Vec<T>")#" 與 a | b"], [#"完成"], [#"2.5 週"], 
+  [#"M3"], [#"GFM 擴充"], [#"進行中"], [], 
+)
+
+#heading(level: 2)[#"刪除線"]
+
+#"原訂 "#strike[#"十月"]#" 九月底完成，"#strike[#"單一波浪號"]#" 也可以。"
+
+#heading(level: 2)[#"任務清單"]
+
+#list(tight: true, marker: [],
+[#mdpdf-checkbox(true)
+#"表格"
+],
+[#mdpdf-checkbox(true)
+#"刪除線"
+],
+[#mdpdf-checkbox(false)
+#"腳註"
+
+#list(tight: true, marker: [],
+[#mdpdf-checkbox(true)
+#"引用"
+],
+[#mdpdf-checkbox(false)
+#"多段落定義"
+],
+)
+],
+)
+
+#heading(level: 2)[#"腳註"]
+
+#"Typst 的排版品質很好"#footnote[#"參見 "#link("https://typst.app")[#"https://typst.app"]#"。"
+]<mdpdf-fn-1>#"，而且可以編進執行檔"#footnote[#"透過 "#raw("typst")#" crate。"
+
+#"腳註也可以有第二段。"
+]<mdpdf-fn-2>#"。再次提到 Typst"#footnote(<mdpdf-fn-1>)#"。"
+
+#heading(level: 2)[#"CJK 強調"]
+
+#"這是"#strong[#"「重點」"]#"這樣、請看"#strong[#"《使用手冊》"]#"第三章，以及"#emph[#"（附註）"]#"說明。"

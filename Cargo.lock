@@ -1451,6 +1451,7 @@ dependencies = [
  "anyhow",
  "clap",
  "md2typst",
+ "mdparse",
  "typst",
  "typst-kit",
  "typst-layout",

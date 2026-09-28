@@ -1,0 +1,17 @@
+---
+source: crates/md2typst/tests/snapshots.rs
+expression: "md2typst::body(&fixture(\"m2-inline.md\"), &Default::default()).source"
+---
+#heading(level: 1)[#"行內格式"]
+
+#strong[#"粗體"]#"、"#emph[#"斜體"]#"、"#emph[#strong[#"粗斜體"]]#"、"#raw("程式碼")#"，以及中文句中的"#strong[#"重點"]#"。"#emph[#"底線強調"]#" 與 snake_case_名稱 不會被誤判。"
+
+#"連結："#link("https://typst.app")[#"Typst"]#"、參照式 "#link("https://spec.commonmark.org/0.31.2/")[#"CommonMark 規格"]#"、autolink "#link("https://example.com/path?q=1")[#"https://example.com/path?q=1"]#"、email "#link("mailto:someone@example.com")[#"someone@example.com"]#"。"
+
+#"字元參照：© & <tag> 中文 與跳脫 *不是強調*。"
+
+#"行內原始 HTML 會被忽略，但裡面的文字保留。"
+
+#align(center, image("images/chart.svg", alt: "季度長條圖"))
+
+#"行內小圖 "#box(image("images/dot.png", alt: "紅點"))#" 放在文字中。"
