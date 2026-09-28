@@ -54,6 +54,11 @@ impl MdWorld {
 }
 
 impl MdWorld {
+    /// Take the fonts back, e.g. to reuse them for the next conversion in watch mode.
+    pub fn into_fonts(self) -> FontStore {
+        self.fonts
+    }
+
     /// Replace the main file content (e.g. source regenerated after formulas fell back to raw text); other file caches are cleared too.
     pub fn set_main_text(&mut self, text: String) {
         let loader = self.files.loader_mut();

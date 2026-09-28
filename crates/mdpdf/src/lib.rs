@@ -4,7 +4,7 @@ pub mod fonts;
 pub mod settings;
 pub mod world;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use typst::WorldExt;
@@ -47,6 +47,8 @@ pub struct Rendered {
     pub source: String,
     /// Maps positions in `source` back to Markdown lines.
     pub source_map: md2typst::SourceMap,
+    /// Formulas and images of the last conversion.
+    pub fallibles: Vec<md2typst::Fallible>,
     /// Markdown-level warnings (missing images, formulas shown as raw text, ...).
     pub warnings: Vec<md2typst::Warning>,
     /// Typst compilation result and Typst warnings.
@@ -91,6 +93,7 @@ pub fn render(
                 world,
                 source: converted.source,
                 source_map: converted.source_map,
+                fallibles: converted.fallibles,
                 warnings,
                 result,
             });
@@ -118,6 +121,17 @@ pub fn render(
 }
 
 impl Rendered {
+    /// Local image files referenced by the document, resolved against `base`.
+    pub fn image_paths(&self, base: &Path) -> Vec<PathBuf> {
+        self.fallibles
+            .iter()
+            .filter_map(|item| match &item.kind {
+                md2typst::FallibleKind::Image(url) if !url.contains("://") => Some(base.join(url)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The Markdown line a Typst diagnostic comes from: its own location if that is in the
     /// converted body, otherwise the innermost call site in the body (e.g. when a template
     /// function fails). `None` when it lies entirely in the prelude, template or packages.

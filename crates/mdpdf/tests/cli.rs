@@ -331,3 +331,49 @@ fn corrupt_image_falls_back_with_markdown_line() {
         .unwrap();
     assert!(!strict.status.success());
 }
+
+/// Poll until `check` holds, for at most `secs` seconds.
+fn wait_for(secs: u64, mut check: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while std::time::Instant::now() < deadline {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+#[test]
+fn watch_rebuilds_on_change() {
+    let dir = scratch("watch");
+    let input = dir.join("doc.md");
+    let pdf = dir.join("doc.pdf");
+    fs::write(&input, "第一版\n").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mdpdf"))
+        .arg(&input)
+        .args(["--watch", "--no-system-fonts", "--no-config"])
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let built = wait_for(20, || pdf.is_file());
+    let first = fs::read(&pdf).unwrap_or_default();
+    // Make sure the new file gets a different modification time
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write(&input, "第二版，內容不同\n\n<!-- pagebreak -->\n\n第二頁\n").unwrap();
+    let rebuilt = wait_for(20, || {
+        fs::read(&pdf).is_ok_and(|bytes| !bytes.is_empty() && bytes != first)
+    });
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(built, "initial PDF was not written");
+    assert!(rebuilt, "PDF was not rebuilt after the input changed");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_mdpdf"))
+        .args(["-", "--watch", "-o", "x.pdf", "--no-config"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}

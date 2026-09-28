@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
@@ -12,6 +13,7 @@ use mdpdf::settings::{self, Metadata, Settings};
 use typst::diag::{Severity, SourceDiagnostic};
 use typst_kit::diagnostics::termcolor::{ColorChoice, StandardStream};
 use typst_kit::diagnostics::{DiagnosticFormat, emit};
+use typst_kit::fonts::FontStore;
 
 // Help text is user-facing, so it lives in `help`/`about` strings rather than doc comments.
 #[derive(Debug, Parser)]
@@ -36,6 +38,13 @@ struct Cli {
 
     #[arg(long, help = "警告視為錯誤（例如找不到圖片或字型）")]
     strict: bool,
+
+    #[arg(
+        short,
+        long,
+        help = "監看輸入檔、圖片、模板與設定檔，變更時自動重新產生"
+    )]
+    watch: bool,
 
     #[command(flatten)]
     style: StyleArgs,
@@ -134,9 +143,64 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .input
         .clone()
         .expect("clap requires an input without a subcommand");
-    let cwd = std::env::current_dir()?;
+    if !cli.watch {
+        let mut watched = Vec::new();
+        return convert(&cli, &input, &mut None, &mut watched);
+    }
+    if input == Path::new("-") || cli.output.as_deref() == Some(Path::new("-")) {
+        bail!("--watch 需要實際的輸入檔與輸出檔，不能使用 stdin／stdout");
+    }
+    watch(&cli, &input)
+}
 
+/// Fonts kept between rebuilds in watch mode, reused while the font settings stay the same.
+struct FontCache {
+    key: (Vec<PathBuf>, bool),
+    store: FontStore,
+}
+
+/// Rebuild whenever one of the files the last conversion depended on changes.
+fn watch(cli: &Cli, input: &Path) -> Result<ExitCode> {
+    let mut cache = None;
+    loop {
+        let mut watched = Vec::new();
+        if let Err(err) = convert(cli, input, &mut cache, &mut watched) {
+            eprintln!("錯誤：{err:#}");
+        }
+        watched.sort();
+        watched.dedup();
+        eprintln!("監看 {} 個檔案中，按 Ctrl+C 結束", watched.len());
+
+        let before = modified_times(&watched);
+        while modified_times(&watched) == before {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        // Give editors that save in several steps a moment to finish.
+        std::thread::sleep(Duration::from_millis(100));
+        eprintln!("\n偵測到變更，重新產生……");
+    }
+}
+
+fn modified_times(paths: &[PathBuf]) -> Vec<Option<SystemTime>> {
+    paths
+        .iter()
+        .map(|p| fs::metadata(p).and_then(|m| m.modified()).ok())
+        .collect()
+}
+
+/// Convert once. Every file the result depends on is pushed to `watched`, even when the
+/// conversion fails part way, so watch mode knows what to wait for.
+fn convert(
+    cli: &Cli,
+    input: &Path,
+    font_cache: &mut Option<FontCache>,
+    watched: &mut Vec<PathBuf>,
+) -> Result<ExitCode> {
+    let cwd = std::env::current_dir()?;
     let stdin = input == Path::new("-");
+    if !stdin {
+        watched.push(input.to_path_buf());
+    }
     let (markdown, dir, name) = if stdin {
         let mut text = String::new();
         io::stdin()
@@ -145,7 +209,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         (text, cwd.clone(), "stdin".to_string())
     } else {
         let text =
-            fs::read_to_string(&input).with_context(|| format!("無法讀取 {}", input.display()))?;
+            fs::read_to_string(input).with_context(|| format!("無法讀取 {}", input.display()))?;
         let dir = input
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -172,14 +236,29 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }),
         None => (Metadata::default(), Settings::default()),
     };
+    let config = config_path(&cli.fonts);
+    watched.extend(config.clone());
+    let config = match config {
+        Some(path) => settings::load_config(&path)?,
+        None => Settings::default(),
+    };
     let merged = cli_settings(&cli.style, &cli.fonts, &cwd)
         .or(front)
-        .or(config_settings(&cli.fonts)?);
+        .or(config);
+    watched.extend(merged.template.clone());
+    watched.extend(merged.code_theme.clone());
 
-    let fonts = mdpdf::fonts::load(&FontOptions {
-        font_paths: merged.font_path.clone().unwrap_or_default(),
-        system_fonts: merged.system_fonts.unwrap_or(true),
-    })?;
+    let key = (
+        merged.font_path.clone().unwrap_or_default(),
+        merged.system_fonts.unwrap_or(true),
+    );
+    let fonts = match font_cache.take() {
+        Some(cache) if cache.key == key => cache.store,
+        _ => mdpdf::fonts::load(&FontOptions {
+            font_paths: key.0.clone(),
+            system_fonts: key.1,
+        })?,
+    };
     let resolved = settings::resolve(&merged, meta, fonts.book())?;
     warnings.extend(resolved.warnings);
 
@@ -192,22 +271,39 @@ fn run(cli: Cli) -> Result<ExitCode> {
     };
     let main_path = dir.join(format!("{name}.typ"));
     let rendered = mdpdf::render(&markdown, &main_path, options, fonts)?;
+    watched.extend(rendered.image_paths(&dir));
 
+    let code = report(cli, &name, &output, &warnings, &rendered);
+    *font_cache = Some(FontCache {
+        key,
+        store: rendered.world.into_fonts(),
+    });
+    code
+}
+
+/// Print warnings and diagnostics, then write the PDF.
+fn report(
+    cli: &Cli,
+    name: &str,
+    output: &Path,
+    warnings: &[String],
+    rendered: &Rendered,
+) -> Result<ExitCode> {
     if let Some(path) = &cli.emit_typst {
         fs::write(path, &rendered.source)
             .with_context(|| format!("無法寫入 {}", path.display()))?;
     }
-    for warning in &warnings {
+    for warning in warnings {
         eprintln!("警告：{warning}");
     }
     for warning in &rendered.warnings {
         eprintln!("警告：{name}:{}：{}", warning.line, warning.message);
     }
-    print_diagnostics(&rendered, &name, &rendered.result.warnings)?;
+    print_diagnostics(rendered, name, &rendered.result.warnings)?;
     let pdf = match &rendered.result.output {
         Ok(pdf) => pdf,
         Err(errors) => {
-            print_diagnostics(&rendered, &name, errors)?;
+            print_diagnostics(rendered, name, errors)?;
             eprintln!("提示：可用 --emit-typst 檢視產生的 Typst 原始碼");
             return Ok(ExitCode::FAILURE);
         }
@@ -225,7 +321,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         stdout.write_all(&pdf.bytes)?;
         stdout.flush()?;
     } else {
-        fs::write(&output, &pdf.bytes).with_context(|| format!("無法寫入 {}", output.display()))?;
+        fs::write(output, &pdf.bytes).with_context(|| format!("無法寫入 {}", output.display()))?;
         eprintln!("已輸出 {}（{} 頁）", output.display(), pdf.pages);
     }
     Ok(ExitCode::SUCCESS)
@@ -250,23 +346,24 @@ fn cli_settings(style: &StyleArgs, fonts: &FontArgs, cwd: &Path) -> Settings {
     .resolve_paths(cwd)
 }
 
-/// The config file layer: `--config`, else the default path if it exists.
-fn config_settings(fonts: &FontArgs) -> Result<Settings> {
+/// The config file to read: `--config`, else the default path if it exists.
+fn config_path(fonts: &FontArgs) -> Option<PathBuf> {
     if fonts.no_config {
-        return Ok(Settings::default());
+        return None;
     }
-    match &fonts.config {
-        Some(path) => settings::load_config(path),
-        None => match settings::default_config_path().filter(|p| p.is_file()) {
-            Some(path) => settings::load_config(&path),
-            None => Ok(Settings::default()),
-        },
-    }
+    fonts
+        .config
+        .clone()
+        .or_else(|| settings::default_config_path().filter(|p| p.is_file()))
 }
 
 fn list_fonts(args: &FontArgs) -> Result<ExitCode> {
     let cwd = std::env::current_dir()?;
-    let merged = cli_settings(&StyleArgs::none(), args, &cwd).or(config_settings(args)?);
+    let config = match config_path(args) {
+        Some(path) => settings::load_config(&path)?,
+        None => Settings::default(),
+    };
+    let merged = cli_settings(&StyleArgs::none(), args, &cwd).or(config);
     let fonts = mdpdf::fonts::load(&FontOptions {
         font_paths: merged.font_path.unwrap_or_default(),
         system_fonts: merged.system_fonts.unwrap_or(true),
