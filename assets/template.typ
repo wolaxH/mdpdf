@@ -26,10 +26,13 @@
   breakable: it.text.split("\n").len() > 30,
   it,
 )
-#show raw.where(block: false): box.with(
+// Inline code uses highlight rather than box: a box cannot break, so a long path or URL would
+// be pushed to the next line whole and justification would stretch the previous line's spaces.
+#show raw.where(block: false): highlight.with(
   fill: luma(240),
-  inset: (x: 3pt),
-  outset: (y: 3pt),
+  top-edge: "ascender",
+  bottom-edge: "descender",
+  extent: 2pt,
   radius: 2pt,
 )
 
