@@ -29,6 +29,7 @@ serde-saphyr = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 insta = "1"
+criterion = { version = "0.7", default-features = false }
 
 # typst is very slow in debug builds: optimize all dependencies, keep our own crates fast to compile.
 [profile.dev.package."*"]

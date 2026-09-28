@@ -158,3 +158,26 @@ fn m5_front_matter_title_and_toc() {
     assert!(warnings.is_empty(), "{warnings:#?}");
     assert_eq!(pdf.pages, 1);
 }
+
+#[test]
+#[cfg(feature = "embed-cjk")]
+fn many_identical_bad_formulas_all_fall_back() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .canonicalize()
+        .unwrap();
+    let markdown = "$\\left( x$\n\n".repeat(30);
+    let fonts = fonts::load(&FontOptions {
+        system_fonts: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let rendered =
+        mdpdf::render(&markdown, &dir.join("main.typ"), Default::default(), fonts).unwrap();
+    assert!(
+        rendered.result.output.is_ok(),
+        "{:#?}",
+        rendered.result.output.err()
+    );
+    assert_eq!(rendered.warnings.len(), 30);
+}

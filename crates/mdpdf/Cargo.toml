@@ -27,3 +27,10 @@ zstd = { workspace = true, optional = true }
 
 [build-dependencies]
 zstd.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "convert"
+harness = false

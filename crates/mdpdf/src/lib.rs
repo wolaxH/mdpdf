@@ -56,7 +56,7 @@ pub struct Rendered {
 }
 
 /// Maximum number of retries after a layout failure (each round falls back the failing elements).
-const MAX_MATH_RETRIES: usize = 5;
+const MAX_RETRIES: usize = 10;
 
 /// The complete Markdown → PDF pipeline.
 ///
@@ -77,7 +77,7 @@ pub fn render(
     for attempt in 0.. {
         let result = compile_pdf(&world);
         let failed = match &result.output {
-            Err(errors) if attempt < MAX_MATH_RETRIES => {
+            Err(errors) if attempt < MAX_RETRIES => {
                 failing_elements(&world, errors, &converted.fallibles)
                     .into_iter()
                     .filter(|(index, _)| !options.fallback.contains(index))
@@ -99,20 +99,26 @@ pub fn render(
             });
         }
         for (index, message) in failed {
-            let item = &converted.fallibles[index];
-            let message = match &item.kind {
-                md2typst::FallibleKind::Math(tex) => {
-                    format!("公式 `{tex}` 無法排版：{message}，改以原文顯示")
+            let failed_kind = &converted.fallibles[index].kind;
+            // Identical formulas or images fail the same way, so fall them all back at once
+            // instead of discovering them one compile at a time.
+            for (other, item) in converted.fallibles.iter().enumerate() {
+                if item.kind != *failed_kind || !options.fallback.insert(other) {
+                    continue;
                 }
-                md2typst::FallibleKind::Image(url) => {
-                    format!("圖片 {url} 無法載入：{message}，改用佔位框")
-                }
-            };
-            element_warnings.push(md2typst::Warning {
-                line: item.line,
-                message,
-            });
-            options.fallback.insert(index);
+                let message = match &item.kind {
+                    md2typst::FallibleKind::Math(tex) => {
+                        format!("公式 `{tex}` 無法排版：{message}，改以原文顯示")
+                    }
+                    md2typst::FallibleKind::Image(url) => {
+                        format!("圖片 {url} 無法載入：{message}，改用佔位框")
+                    }
+                };
+                element_warnings.push(md2typst::Warning {
+                    line: item.line,
+                    message,
+                });
+            }
         }
         converted = md2typst::convert(markdown, &options);
         world.set_main_text(converted.source.clone());

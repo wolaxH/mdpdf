@@ -67,7 +67,7 @@ struct FontArgs {
     #[arg(long, value_name = "PATH", help = "額外字型檔或目錄（可重複指定）")]
     font_path: Vec<PathBuf>,
 
-    #[arg(long, help = "不讀取系統字型")]
+    #[arg(long, help = "不使用系統字型（預設只在內嵌字型不足時才掃描）")]
     no_system_fonts: bool,
 
     #[arg(
@@ -153,9 +153,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
     watch(&cli, &input)
 }
 
-/// Fonts kept between rebuilds in watch mode, reused while the font settings stay the same.
+/// Fonts kept between rebuilds in watch mode, reused while `--font-path` stays the same.
 struct FontCache {
-    key: (Vec<PathBuf>, bool),
+    font_paths: Vec<PathBuf>,
+    has_system: bool,
     store: FontStore,
 }
 
@@ -248,17 +249,32 @@ fn convert(
     watched.extend(merged.template.clone());
     watched.extend(merged.code_theme.clone());
 
-    let key = (
-        merged.font_path.clone().unwrap_or_default(),
-        merged.system_fonts.unwrap_or(true),
-    );
-    let fonts = match font_cache.take() {
-        Some(cache) if cache.key == key => cache.store,
-        _ => mdpdf::fonts::load(&FontOptions {
-            font_paths: key.0.clone(),
-            system_fonts: key.1,
-        })?,
+    // Scanning system fonts can take seconds, so it only happens when the embedded fonts fall
+    // short: a requested font is missing, the text has uncovered characters, or a custom
+    // template may refer to installed fonts by name.
+    let font_paths = merged.font_path.clone().unwrap_or_default();
+    let (mut fonts, mut has_system) = match font_cache.take() {
+        Some(cache) if cache.font_paths == font_paths => (cache.store, cache.has_system),
+        _ => {
+            let options = FontOptions {
+                font_paths: font_paths.clone(),
+                system_fonts: false,
+            };
+            (mdpdf::fonts::load(&options)?, false)
+        }
     };
+    let requested: Vec<&str> = [&merged.font, &merged.cjk_font, &merged.mono_font]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let allowed = merged.system_fonts.unwrap_or(true);
+    let needed = merged.template.is_some()
+        || mdpdf::fonts::needs_system_fonts(fonts.book(), &requested, &markdown);
+    if allowed && needed && !has_system {
+        mdpdf::fonts::add_system_fonts(&mut fonts);
+        has_system = true;
+    }
     let resolved = settings::resolve(&merged, meta, fonts.book())?;
     warnings.extend(resolved.warnings);
 
@@ -275,7 +291,8 @@ fn convert(
 
     let code = report(cli, &name, &output, &warnings, &rendered);
     *font_cache = Some(FontCache {
-        key,
+        font_paths,
+        has_system,
         store: rendered.world.into_fonts(),
     });
     code
