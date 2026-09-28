@@ -304,3 +304,30 @@ fn strict_mode_and_stdin() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn corrupt_image_falls_back_with_markdown_line() {
+    let dir = scratch("corrupt-image");
+    fs::write(dir.join("broken.png"), "not a png").unwrap();
+    let input = dir.join("doc.md");
+    fs::write(&input, "# 標題\n\n段落\n![壞掉](broken.png)\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mdpdf"))
+        .arg(&input)
+        .args(["--no-system-fonts", "--no-config"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("doc.md:4：圖片 broken.png 無法載入"),
+        "{stderr}"
+    );
+    assert!(dir.join("doc.pdf").is_file());
+
+    let strict = Command::new(env!("CARGO_BIN_EXE_mdpdf"))
+        .arg(&input)
+        .args(["--no-system-fonts", "--no-config", "--strict"])
+        .output()
+        .unwrap();
+    assert!(!strict.status.success());
+}

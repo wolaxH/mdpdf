@@ -114,6 +114,8 @@ pub enum Inline<'a> {
         url: Cow<'a, str>,
         title: Option<Cow<'a, str>>,
         alt: Vec<Inline<'a>>,
+        /// Source line of the image, for diagnostics.
+        line: u32,
     },
     /// Raw inline HTML: recognized but not rendered.
     Html(Cow<'a, str>),
@@ -121,6 +123,8 @@ pub enum Inline<'a> {
     Math {
         tex: Cow<'a, str>,
         display: bool,
+        /// Source line of the formula, for diagnostics.
+        line: u32,
     },
     SoftBreak,
     HardBreak,
@@ -145,15 +149,22 @@ impl Inline<'_> {
                 title: title.map(owned),
                 content: all(content),
             },
-            Inline::Image { url, title, alt } => Inline::Image {
+            Inline::Image {
+                url,
+                title,
+                alt,
+                line,
+            } => Inline::Image {
                 url: owned(url),
                 title: title.map(owned),
                 alt: all(alt),
+                line,
             },
             Inline::Html(s) => Inline::Html(owned(s)),
-            Inline::Math { tex, display } => Inline::Math {
+            Inline::Math { tex, display, line } => Inline::Math {
                 tex: owned(tex),
                 display,
+                line,
             },
             Inline::SoftBreak => Inline::SoftBreak,
             Inline::HardBreak => Inline::HardBreak,

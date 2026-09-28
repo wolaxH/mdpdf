@@ -6,10 +6,10 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use mdpdf::MdWorld;
+use mdpdf::Rendered;
 use mdpdf::fonts::FontOptions;
 use mdpdf::settings::{self, Metadata, Settings};
-use typst::diag::SourceDiagnostic;
+use typst::diag::{Severity, SourceDiagnostic};
 use typst_kit::diagnostics::termcolor::{ColorChoice, StandardStream};
 use typst_kit::diagnostics::{DiagnosticFormat, emit};
 
@@ -203,11 +203,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
     for warning in &rendered.warnings {
         eprintln!("警告：{name}:{}：{}", warning.line, warning.message);
     }
-    print_diagnostics(&rendered.world, &rendered.result.warnings)?;
-    let pdf = match rendered.result.output {
+    print_diagnostics(&rendered, &name, &rendered.result.warnings)?;
+    let pdf = match &rendered.result.output {
         Ok(pdf) => pdf,
         Err(errors) => {
-            print_diagnostics(&rendered.world, &errors)?;
+            print_diagnostics(&rendered, &name, errors)?;
+            eprintln!("提示：可用 --emit-typst 檢視產生的 Typst 原始碼");
             return Ok(ExitCode::FAILURE);
         }
     };
@@ -295,8 +296,29 @@ impl StyleArgs {
     }
 }
 
-fn print_diagnostics(world: &MdWorld, diagnostics: &[SourceDiagnostic]) -> Result<()> {
-    if diagnostics.is_empty() {
+/// Diagnostics caused by Markdown content are reported against the Markdown line; the rest
+/// (template, packages) are shown with Typst's own source excerpt.
+fn print_diagnostics(
+    rendered: &Rendered,
+    name: &str,
+    diagnostics: &[SourceDiagnostic],
+) -> Result<()> {
+    let mut typst_side = Vec::new();
+    for diagnostic in diagnostics {
+        let Some(line) = rendered.markdown_line(diagnostic) else {
+            typst_side.push(diagnostic.clone());
+            continue;
+        };
+        let kind = match diagnostic.severity {
+            Severity::Error => "錯誤",
+            Severity::Warning => "警告",
+        };
+        eprintln!("{kind}：{name}:{line}：{}", diagnostic.message);
+        for hint in &diagnostic.hints {
+            eprintln!("  提示：{}", hint.v);
+        }
+    }
+    if typst_side.is_empty() {
         return Ok(());
     }
     let color = if io::stderr().is_terminal() {
@@ -305,5 +327,11 @@ fn print_diagnostics(world: &MdWorld, diagnostics: &[SourceDiagnostic]) -> Resul
         ColorChoice::Never
     };
     let mut stderr = StandardStream::stderr(color);
-    emit(&mut stderr, world, diagnostics, DiagnosticFormat::Human).context("無法輸出診斷訊息")
+    emit(
+        &mut stderr,
+        &rendered.world,
+        &typst_side,
+        DiagnosticFormat::Human,
+    )
+    .context("無法輸出診斷訊息")
 }

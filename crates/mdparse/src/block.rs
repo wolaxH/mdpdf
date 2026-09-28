@@ -982,12 +982,12 @@ fn build_blocks<'a>(
 }
 
 fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>) -> Block<'a> {
-    let node = nodes[id].take().expect("每個節點只會被建構一次");
+    let node = nodes[id].take().expect("each node is built exactly once");
     let kind = match node.kind {
-        Kind::Paragraph => BlockKind::Paragraph(inline::parse(node.content, ctx)),
+        Kind::Paragraph => BlockKind::Paragraph(inline::parse(node.content, ctx, node.start.line)),
         Kind::Heading { level } => BlockKind::Heading {
             level,
-            content: inline::parse(node.content, ctx),
+            content: inline::parse(node.content, ctx, node.start.line),
         },
         Kind::BlockQuote => BlockKind::BlockQuote(build_blocks(nodes, &node.children, ctx)),
         Kind::List { data, tight } => BlockKind::List {
@@ -1018,24 +1018,28 @@ fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>)
         Kind::ThematicBreak => BlockKind::ThematicBreak,
         Kind::Table { align } => {
             let columns = align.len();
-            let mut row = |line: &Line<'a>| -> Vec<Cell<'a>> {
+            let start = node.start.line;
+            let row = |line: &Line<'a>, number: u32| -> Vec<Cell<'a>> {
                 let mut cells: Vec<Cell<'a>> = split_row(line.text)
                     .into_iter()
                     .take(columns)
-                    .map(|c| inline::parse(c, ctx))
+                    .map(|c| inline::parse(c, ctx, number))
                     .collect();
                 cells.resize_with(columns, Vec::new);
                 cells
             };
-            let head = row(&node.lines[0]);
-            let rows = node.lines[2..].iter().map(&mut row).collect();
+            // The header is on the table's first line; data rows follow the delimiter row
+            let head = row(&node.lines[0], start);
+            let rows = (node.lines[2..].iter().zip(start + 2..))
+                .map(|(line, number)| row(line, number))
+                .collect();
             BlockKind::Table { align, head, rows }
         }
         Kind::FootnoteDef => BlockKind::FootnoteDef {
             label: node.content,
             blocks: build_blocks(nodes, &node.children, ctx),
         },
-        Kind::Item { .. } | Kind::Document => unreachable!("清單項目由清單建構"),
+        Kind::Item { .. } | Kind::Document => unreachable!("list items are built by their list"),
     };
     Block {
         kind,

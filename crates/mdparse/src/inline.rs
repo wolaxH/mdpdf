@@ -21,22 +21,28 @@ pub struct Ctx<'c, 'a> {
     pub options: Options,
 }
 
-/// Parse one piece of content. Borrowed content yields borrowed nodes; otherwise the result is converted to owned.
-pub fn parse<'a>(content: Cow<'a, str>, ctx: &Ctx<'_, 'a>) -> Vec<Inline<'a>> {
+/// Parse one piece of content whose first line is source line `line`. Borrowed content yields
+/// borrowed nodes; otherwise the result is converted to owned.
+pub fn parse<'a>(content: Cow<'a, str>, ctx: &Ctx<'_, 'a>, line: u32) -> Vec<Inline<'a>> {
     match content {
-        Cow::Borrowed(s) => parse_str(s, ctx),
-        Cow::Owned(s) => parse_str(&s, ctx)
+        Cow::Borrowed(s) => parse_str(s, ctx, line),
+        Cow::Owned(s) => parse_str(&s, ctx, line)
             .into_iter()
             .map(Inline::into_owned)
             .collect(),
     }
 }
 
-pub fn parse_str<'s, 'a: 's>(s: &'s str, ctx: &Ctx<'_, 'a>) -> Vec<Inline<'s>> {
-    let s = s.trim_matches([' ', '\t', '\n']);
+/// Content lines map one-to-one to source lines, so the line of any position is `line` plus the
+/// number of newlines before it.
+pub fn parse_str<'s, 'a: 's>(s: &'s str, ctx: &Ctx<'_, 'a>, line: u32) -> Vec<Inline<'s>> {
+    let trimmed = s.trim_start_matches([' ', '\t', '\n']);
+    let line = line + s[..s.len() - trimmed.len()].matches('\n').count() as u32;
+    let s = trimmed.trim_end_matches([' ', '\t', '\n']);
     let mut p = Parser {
         s,
         pos: 0,
+        line,
         refs: ctx.links,
         footnotes: ctx.footnotes,
         options: ctx.options,
@@ -69,6 +75,7 @@ enum Kind<'s> {
     Math {
         tex: &'s str,
         display: bool,
+        line: u32,
     },
     Link {
         url: Cow<'s, str>,
@@ -77,6 +84,7 @@ enum Kind<'s> {
     Image {
         url: Cow<'s, str>,
         title: Option<Cow<'s, str>>,
+        line: u32,
     },
 }
 
@@ -134,6 +142,8 @@ struct Bracket {
 struct Parser<'s, 'm> {
     s: &'s str,
     pos: usize,
+    /// Source line of the start of `s`.
+    line: u32,
     refs: &'m HashMap<String, LinkDef<'s>>,
     footnotes: &'m HashSet<String>,
     options: Options,
@@ -226,6 +236,10 @@ impl<'s> Parser<'s, '_> {
     }
 
     // ---- scanning ----
+
+    fn line_at(&self, pos: usize) -> u32 {
+        self.line + self.s[..pos].matches('\n').count() as u32
+    }
 
     fn peek(&self) -> Option<u8> {
         self.s.as_bytes().get(self.pos).copied()
@@ -418,7 +432,8 @@ impl<'s> Parser<'s, '_> {
         if tex.is_empty() {
             return false;
         }
-        self.add(ROOT, Kind::Math { tex, display });
+        let line = self.line_at(start);
+        self.add(ROOT, Kind::Math { tex, display, line });
         self.pos = close + if display { 2 } else { 1 };
         true
     }
@@ -677,7 +692,8 @@ impl<'s> Parser<'s, '_> {
         };
 
         let kind = if image {
-            Kind::Image { url, title }
+            let line = self.line_at(opener_index);
+            Kind::Image { url, title, line }
         } else {
             Kind::Link { url, title }
         };
@@ -753,19 +769,21 @@ impl<'s> Parser<'s, '_> {
                 Kind::Strong => Inline::Strong(self.build(id)),
                 Kind::Strike => Inline::Strike(self.build(id)),
                 Kind::FootnoteRef(label) => Inline::FootnoteRef(Cow::Borrowed(label)),
-                Kind::Math { tex, display } => Inline::Math {
+                Kind::Math { tex, display, line } => Inline::Math {
                     tex: Cow::Borrowed(tex),
                     display,
+                    line,
                 },
                 Kind::Link { url, title } => Inline::Link {
                     url,
                     title,
                     content: self.build(id),
                 },
-                Kind::Image { url, title } => Inline::Image {
+                Kind::Image { url, title, line } => Inline::Image {
                     url,
                     title,
                     alt: self.build(id),
+                    line,
                 },
                 Kind::Root => unreachable!(),
             };
@@ -852,6 +870,7 @@ mod tests {
                 footnotes: &footnotes,
                 options,
             },
+            1,
         )
     }
 
@@ -925,7 +944,8 @@ mod tests {
             [Image {
                 url: "i.png".into(),
                 title: None,
-                alt: vec![Emph(vec![text("a")])]
+                alt: vec![Emph(vec![text("a")])],
+                line: 1,
             }]
         );
     }
@@ -945,6 +965,7 @@ mod tests {
         let math = |tex| Math {
             tex: Cow::Borrowed(tex),
             display: false,
+            line: 1,
         };
         assert_eq!(
             parse("$x^2$ 與 $a*b*c$"),
@@ -954,7 +975,8 @@ mod tests {
             parse("$$ \\sum_i x_i $$"),
             [Math {
                 tex: "\\sum_i x_i".into(),
-                display: true
+                display: true,
+                line: 1,
             }]
         );
         assert_eq!(parse("$\\$5$"), [math("\\$5")]);

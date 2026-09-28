@@ -45,20 +45,23 @@ pub struct Rendered {
     pub world: MdWorld,
     /// Typst source of the last compilation.
     pub source: String,
+    /// Maps positions in `source` back to Markdown lines.
+    pub source_map: md2typst::SourceMap,
     /// Markdown-level warnings (missing images, formulas shown as raw text, ...).
     pub warnings: Vec<md2typst::Warning>,
     /// Typst compilation result and Typst warnings.
     pub result: Warned<SourceResult<Pdf>>,
 }
 
-/// Maximum number of retries after a layout failure (each round turns failing formulas into raw text).
+/// Maximum number of retries after a layout failure (each round falls back the failing elements).
 const MAX_MATH_RETRIES: usize = 5;
 
 /// The complete Markdown → PDF pipeline.
 ///
-/// A formula that MiTeX converted successfully can still fail when Typst evaluates it (e.g. `\left(`
-/// without a matching `\right`). In that case, find the formulas the errors fall into, show them as
-/// raw text and compile again, instead of failing the whole document.
+/// Some elements only fail when Typst lays them out: a formula MiTeX converted can still fail to
+/// evaluate (e.g. `\left(` without a matching `\right`), and an image file can be corrupt. In that
+/// case, find the elements the errors fall into, replace them with their fallback (raw source or a
+/// placeholder) and compile again, instead of failing the whole document.
 pub fn render(
     markdown: &str,
     main_path: &Path,
@@ -67,37 +70,46 @@ pub fn render(
 ) -> Result<Rendered> {
     let mut converted = md2typst::convert(markdown, &options);
     let mut world = MdWorld::new(main_path, converted.source.clone(), fonts)?;
-    let mut math_warnings = Vec::new();
+    let mut element_warnings = Vec::new();
 
     for attempt in 0.. {
         let result = compile_pdf(&world);
         let failed = match &result.output {
             Err(errors) if attempt < MAX_MATH_RETRIES => {
-                failing_formulas(&world, errors, &converted.formulas)
+                failing_elements(&world, errors, &converted.fallibles)
                     .into_iter()
-                    .filter(|(index, _)| !options.math_fallback.contains(index))
+                    .filter(|(index, _)| !options.fallback.contains(index))
                     .collect()
             }
             _ => Vec::new(),
         };
         if failed.is_empty() {
             let mut warnings = converted.warnings;
-            warnings.extend(math_warnings);
+            warnings.extend(element_warnings);
             warnings.sort_by_key(|w| w.line);
             return Ok(Rendered {
                 world,
                 source: converted.source,
+                source_map: converted.source_map,
                 warnings,
                 result,
             });
         }
         for (index, message) in failed {
-            let formula = &converted.formulas[index];
-            math_warnings.push(md2typst::Warning {
-                line: formula.line,
-                message: format!("公式 `{}` 無法排版：{message}，改以原文顯示", formula.tex),
+            let item = &converted.fallibles[index];
+            let message = match &item.kind {
+                md2typst::FallibleKind::Math(tex) => {
+                    format!("公式 `{tex}` 無法排版：{message}，改以原文顯示")
+                }
+                md2typst::FallibleKind::Image(url) => {
+                    format!("圖片 {url} 無法載入：{message}，改用佔位框")
+                }
+            };
+            element_warnings.push(md2typst::Warning {
+                line: item.line,
+                message,
             });
-            options.math_fallback.insert(index);
+            options.fallback.insert(index);
         }
         converted = md2typst::convert(markdown, &options);
         world.set_main_text(converted.source.clone());
@@ -105,11 +117,26 @@ pub fn render(
     unreachable!()
 }
 
-/// Find the formulas that error locations (or their call traces) fall into. Returns (formula index, error message).
-fn failing_formulas(
+impl Rendered {
+    /// The Markdown line a Typst diagnostic comes from: its own location if that is in the
+    /// converted body, otherwise the innermost call site in the body (e.g. when a template
+    /// function fails). `None` when it lies entirely in the prelude, template or packages.
+    pub fn markdown_line(&self, diagnostic: &SourceDiagnostic) -> Option<u32> {
+        let main = typst::World::main(&self.world);
+        let spans = std::iter::once(diagnostic.span)
+            .chain(diagnostic.trace.iter().map(|t| DiagSpan::from(t.span)));
+        spans
+            .filter(|span| span.id() == Some(main))
+            .filter_map(|span| self.world.range(span))
+            .find_map(|range| self.source_map.line_at(range.start))
+    }
+}
+
+/// Find the elements that error locations (or their call traces) fall into. Returns (element index, error message).
+fn failing_elements(
     world: &MdWorld,
     errors: &[SourceDiagnostic],
-    formulas: &[md2typst::Formula],
+    elements: &[md2typst::Fallible],
 ) -> Vec<(usize, String)> {
     let main = typst::World::main(world);
     let mut failed: Vec<(usize, String)> = Vec::new();
@@ -123,7 +150,7 @@ fn failing_formulas(
             let Some(range) = world.range(span) else {
                 continue;
             };
-            let hit = formulas
+            let hit = elements
                 .iter()
                 .position(|f| f.range.start <= range.start && range.end <= f.range.end);
             if let Some(index) = hit

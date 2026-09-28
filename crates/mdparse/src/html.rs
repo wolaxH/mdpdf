@@ -201,7 +201,9 @@ impl<'d, 'a> Renderer<'d, 'a> {
                     self.inlines(content);
                     self.out.push_str("</a>");
                 }
-                Inline::Image { url, title, alt } => {
+                Inline::Image {
+                    url, title, alt, ..
+                } => {
                     self.out.push_str("<img src=\"");
                     escape(&mut self.out, &normalize_uri(url));
                     self.out.push_str("\" alt=\"");
@@ -213,7 +215,7 @@ impl<'d, 'a> Renderer<'d, 'a> {
                     self.out.push_str(" />");
                 }
                 Inline::Html(html) => self.out.push_str(html),
-                Inline::Math { tex, display } => {
+                Inline::Math { tex, display, .. } => {
                     let (open, close, class) = if *display {
                         ("\\[", "\\]", "display")
                     } else {

@@ -57,8 +57,8 @@ pub struct Options {
     pub base_dir: Option<PathBuf>,
     /// Markdown parsing options.
     pub parse: mdparse::Options,
-    /// Formulas forced to raw text (indices into [`Output::formulas`]), used to retry after a Typst layout failure.
-    pub math_fallback: HashSet<usize>,
+    /// Elements forced to their fallback (indices into [`Output::fallibles`]), used to retry after a Typst layout failure.
+    pub fallback: HashSet<usize>,
     /// Style settings applied on top of the template.
     pub style: Style,
     /// Custom template source used instead of [`TEMPLATE`].
@@ -169,19 +169,56 @@ pub struct Warning {
 pub struct Output {
     pub source: String,
     pub warnings: Vec<Warning>,
-    /// Location of each math formula in `source`, in document order.
-    pub formulas: Vec<Formula>,
+    /// Every formula and image in `source`, in document order. Indices are stable across
+    /// conversions of the same document, whatever [`Options::fallback`] contains.
+    pub fallibles: Vec<Fallible>,
+    /// Maps positions in `source` back to Markdown lines.
+    pub source_map: SourceMap,
 }
 
-/// A math formula in the generated source.
+/// Maps byte offsets in the generated source back to Markdown source lines.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceMap {
+    /// Where the converted body starts; everything before it is prelude and template.
+    pub body_start: usize,
+    /// (offset, line) pairs in increasing offset order: output from `offset` onwards came from `line`.
+    entries: Vec<(usize, u32)>,
+}
+
+impl SourceMap {
+    /// The Markdown line that produced the output at `offset`, or `None` for prelude and template code.
+    pub fn line_at(&self, offset: usize) -> Option<u32> {
+        if offset < self.body_start {
+            return None;
+        }
+        let index = self.entries.partition_point(|&(start, _)| start <= offset);
+        index.checked_sub(1).map(|i| self.entries[i].1)
+    }
+
+    fn mark(&mut self, offset: usize, line: u32) {
+        if self.entries.last().is_none_or(|&(_, last)| last != line) {
+            self.entries.push((offset, line));
+        }
+    }
+}
+
+/// An element that may fail when Typst lays it out (a formula or an image). After a failure,
+/// its index goes into [`Options::fallback`] and the document is converted again.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Formula {
-    /// Byte range of the formula call in `source`.
+pub struct Fallible {
+    /// Byte range of the element's call in `source`.
     pub range: Range<usize>,
-    /// Markdown source line (the first line of the enclosing block).
+    /// Markdown source line.
     pub line: u32,
-    /// LaTeX source.
-    pub tex: String,
+    pub kind: FallibleKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FallibleKind {
+    /// A formula, with its LaTeX source; falls back to the raw source.
+    Math(String),
+    /// An image, with its URL; falls back to a placeholder box.
+    Image(String),
 }
 
 /// Convert Markdown to complete Typst source (including the template).
@@ -202,8 +239,16 @@ pub fn body(markdown: &str, options: &Options) -> Output {
 fn assemble(mut source: String, markdown: &str, options: &Options) -> Output {
     let mut body = String::with_capacity(markdown.len() * 2);
     let mut warnings = Vec::new();
-    let mut formulas = Vec::new();
-    let uses_math = write_body(&mut body, &mut warnings, &mut formulas, markdown, options);
+    let mut fallibles = Vec::new();
+    let mut source_map = SourceMap::default();
+    let uses_math = write_body(
+        &mut body,
+        &mut warnings,
+        &mut fallibles,
+        &mut source_map,
+        markdown,
+        options,
+    );
     if uses_math {
         source.push_str(MATH_PRELUDE);
         source.push('\n');
@@ -213,14 +258,19 @@ fn assemble(mut source: String, markdown: &str, options: &Options) -> Output {
         source.push('\n');
     }
     let offset = source.len();
-    for formula in &mut formulas {
-        formula.range = formula.range.start + offset..formula.range.end + offset;
+    for item in &mut fallibles {
+        item.range = item.range.start + offset..item.range.end + offset;
+    }
+    source_map.body_start = offset;
+    for entry in &mut source_map.entries {
+        entry.0 += offset;
     }
     source.push_str(&body);
     Output {
         source,
         warnings,
-        formulas,
+        fallibles,
+        source_map,
     }
 }
 
@@ -228,7 +278,8 @@ fn assemble(mut source: String, markdown: &str, options: &Options) -> Output {
 fn write_body(
     out: &mut String,
     warnings: &mut Vec<Warning>,
-    formulas: &mut Vec<Formula>,
+    fallibles: &mut Vec<Fallible>,
+    source_map: &mut SourceMap,
     markdown: &str,
     options: &Options,
 ) -> bool {
@@ -238,7 +289,8 @@ fn write_body(
     let mut writer = Writer {
         out,
         warnings,
-        formulas,
+        fallibles,
+        source_map,
         options,
         line: 1,
         footnote_defs,
@@ -272,7 +324,8 @@ fn collect_footnotes<'d, 'a>(blocks: &'d [Block<'a>], defs: &mut HashMap<String,
 struct Writer<'o, 'd, 'a> {
     out: &'o mut String,
     warnings: &'o mut Vec<Warning>,
-    formulas: &'o mut Vec<Formula>,
+    fallibles: &'o mut Vec<Fallible>,
+    source_map: &'o mut SourceMap,
     /// Whether any formula was converted by MiTeX.
     uses_math: bool,
     /// Nesting depth of the current block; the top level is 1.
@@ -290,10 +343,11 @@ struct Writer<'o, 'd, 'a> {
 
 impl Writer<'_, '_, '_> {
     fn warn(&mut self, message: String) {
-        self.warnings.push(Warning {
-            line: self.line,
-            message,
-        });
+        self.warn_at(self.line, message);
+    }
+
+    fn warn_at(&mut self, line: u32, message: String) {
+        self.warnings.push(Warning { line, message });
     }
 
     /// Emit a sequence of blocks separated by blank lines. Every block ends with a newline.
@@ -319,6 +373,7 @@ impl Writer<'_, '_, '_> {
             }
             first = false;
             self.line = block.span.line;
+            self.source_map.mark(self.out.len(), self.line);
             self.block(block);
         }
         self.depth -= 1;
@@ -329,8 +384,8 @@ impl Writer<'_, '_, '_> {
             BlockKind::Paragraph(inlines) if is_image_paragraph(inlines) => {
                 // A paragraph with only images: each image becomes a centered block
                 for inline in inlines {
-                    if let Inline::Image { url, alt, .. } = inline {
-                        self.image(url, alt, true);
+                    if let Inline::Image { url, alt, line, .. } = inline {
+                        self.image(url, alt, *line, true);
                         self.out.push('\n');
                     }
                 }
@@ -381,7 +436,7 @@ impl Writer<'_, '_, '_> {
             }
             BlockKind::Html(_) | BlockKind::FootnoteDef { .. } => {}
             BlockKind::MathBlock(tex) => {
-                self.math(tex, true);
+                self.math(tex, self.line, true);
                 self.out.push('\n');
             }
             BlockKind::ThematicBreak => self.out.push_str("#line(length: 100%)\n"),
@@ -477,9 +532,9 @@ impl Writer<'_, '_, '_> {
                     self.inlines(children);
                     self.out.push(']');
                 }
-                Inline::Math { tex, display } => {
+                Inline::Math { tex, display, line } => {
                     self.flush_text(&mut run);
-                    self.math(tex, *display);
+                    self.math(tex, *line, *display);
                 }
                 Inline::FootnoteRef(label) => {
                     self.flush_text(&mut run);
@@ -498,9 +553,9 @@ impl Writer<'_, '_, '_> {
                         self.out.push(']');
                     }
                 }
-                Inline::Image { url, alt, .. } => {
+                Inline::Image { url, alt, line, .. } => {
                     self.flush_text(&mut run);
-                    self.image(url, alt, false);
+                    self.image(url, alt, *line, false);
                 }
                 Inline::Html(html) => match html_tag_name(html) {
                     Some(name) if name.eq_ignore_ascii_case("br") => {
@@ -520,17 +575,18 @@ impl Writer<'_, '_, '_> {
     }
 
     /// Convert LaTeX to Typst math with MiTeX. On conversion failure, or when forced to fall back, show the raw source in monospace.
-    fn math(&mut self, tex: &str, block: bool) {
-        let index = self.formulas.len();
+    fn math(&mut self, tex: &str, line: u32, block: bool) {
+        let index = self.fallibles.len();
         let start = self.out.len();
-        let converted = if self.options.math_fallback.contains(&index) {
+        self.source_map.mark(start, line);
+        let converted = if self.options.fallback.contains(&index) {
             None
         } else {
             match mitex::convert_math(tex, None) {
                 Ok(code) => Some(space_cases(&code)),
                 Err(err) => {
                     let err = err.strip_prefix("error: ").unwrap_or(&err);
-                    self.warn(format!("無法轉換公式 `{tex}`：{err}，改以原文顯示"));
+                    self.warn_at(line, format!("無法轉換公式 `{tex}`：{err}，改以原文顯示"));
                     None
                 }
             }
@@ -550,10 +606,10 @@ impl Writer<'_, '_, '_> {
                 self.out.push(')');
             }
         }
-        self.formulas.push(Formula {
+        self.fallibles.push(Fallible {
             range: start..self.out.len(),
-            line: self.line,
-            tex: tex.to_string(),
+            line,
+            kind: FallibleKind::Math(tex.to_string()),
         });
     }
 
@@ -587,12 +643,34 @@ impl Writer<'_, '_, '_> {
         }
     }
 
-    fn image(&mut self, url: &str, alt: &[Inline], block: bool) {
+    fn image(&mut self, url: &str, alt: &[Inline], line: u32, block: bool) {
+        let index = self.fallibles.len();
+        let start = self.out.len();
+        self.source_map.mark(start, line);
         let alt = mdparse::plain_text(alt);
-        let path = match self.check_image(url) {
-            Ok(path) => path,
-            Err(message) => {
-                self.warn(message);
+        let path = if self.options.fallback.contains(&index) {
+            // Already reported when Typst failed to load it
+            None
+        } else {
+            self.check_image(url)
+                .map_err(|message| self.warn_at(line, message))
+                .ok()
+        };
+        match path {
+            Some(path) => {
+                self.out.push_str(if block {
+                    "#align(center, image("
+                } else {
+                    "#box(image("
+                });
+                push_str_literal(self.out, &path);
+                if !alt.is_empty() {
+                    self.out.push_str(", alt: ");
+                    push_str_literal(self.out, &alt);
+                }
+                self.out.push_str("))");
+            }
+            None => {
                 // Placeholder box: show the alt text (or the path when there is none)
                 let label = if alt.is_empty() { url } else { &alt };
                 self.out
@@ -604,20 +682,13 @@ impl Writer<'_, '_, '_> {
                 if block {
                     self.out.push(')');
                 }
-                return;
             }
-        };
-        self.out.push_str(if block {
-            "#align(center, image("
-        } else {
-            "#box(image("
-        });
-        push_str_literal(self.out, &path);
-        if !alt.is_empty() {
-            self.out.push_str(", alt: ");
-            push_str_literal(self.out, &alt);
         }
-        self.out.push_str("))");
+        self.fallibles.push(Fallible {
+            range: start..self.out.len(),
+            line,
+            kind: FallibleKind::Image(url.to_string()),
+        });
     }
 
     /// Check that an image is usable and return the path to hand to Typst.
@@ -1021,6 +1092,38 @@ mod tests {
 
         // Default style emits nothing
         assert_eq!(typst("text"), "#\"text\"\n");
+    }
+
+    #[test]
+    fn warnings_point_at_the_exact_line() {
+        let md = "段落第一行\n第二行 ![a](missing.png)\n第三行 $\\foo$\n\n| a |\n| - |\n| x |\n| ![b](gone.png) |\n";
+        let out = body(
+            md,
+            &Options {
+                base_dir: Some(std::env::temp_dir()),
+                ..Default::default()
+            },
+        );
+        let lines: Vec<u32> = out.warnings.iter().map(|w| w.line).collect();
+        assert_eq!(lines, [2, 3, 8], "{:#?}", out.warnings);
+        assert_eq!(out.fallibles[1].line, 3);
+    }
+
+    #[test]
+    fn source_map_points_back_to_markdown() {
+        let md = "# 標題\n\n段落\n第二行 ![a](x.png) 之後\n\n- 清單\n";
+        let out = convert(md, &Options::default());
+        let map = &out.source_map;
+        assert_eq!(
+            map.line_at(0),
+            None,
+            "prelude and template have no Markdown line"
+        );
+        let at = |needle: &str| map.line_at(out.source.find(needle).unwrap());
+        assert_eq!(at("#heading"), Some(1));
+        assert_eq!(at("#\"段落"), Some(3));
+        assert_eq!(at("#box(image"), Some(4));
+        assert_eq!(at("#list"), Some(6));
     }
 
     #[test]

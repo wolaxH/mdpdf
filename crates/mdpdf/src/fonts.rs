@@ -71,7 +71,7 @@ fn embedded_cjk() -> impl Iterator<Item = (Font, typst::text::FontInfo)> {
     }
 
     generated::CJK_FONTS.iter().flat_map(|compressed| {
-        let data = zstd::decode_all(*compressed).expect("內嵌字型應為有效的 zstd 資料");
+        let data = zstd::decode_all(*compressed).expect("embedded fonts are valid zstd data");
         Font::iter(Bytes::new(data)).map(with_info)
     })
 }
