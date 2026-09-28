@@ -19,6 +19,15 @@ const ROOT: usize = 0;
 pub fn parse(input: &str, options: Options) -> Document<'_> {
     let mut parser = Parser::new(input, options);
     let mut rest = input;
+    let mut front_matter = None;
+    if options.front_matter
+        && let Some((yaml, consumed, lines)) = split_front_matter(input)
+    {
+        front_matter = Some(Cow::Borrowed(yaml));
+        rest = &input[consumed..];
+        // Skipped lines still count, so spans keep pointing at the right source lines
+        parser.line_number = lines;
+    }
     while !rest.is_empty() {
         let end = rest.find(['\n', '\r']).unwrap_or(rest.len());
         parser.incorporate_line(&rest[..end]);
@@ -29,7 +38,39 @@ pub fn parse(input: &str, options: Options) -> Document<'_> {
         };
         rest = &rest[end + eol..];
     }
-    parser.finish()
+    let mut doc = parser.finish();
+    doc.front_matter = front_matter;
+    doc
+}
+
+/// Front matter: a first line `---`, a closing line `---` or `...`, and YAML-looking content
+/// (the first non-blank line is `key: value`), so that a thematic break followed by a setext
+/// heading is not mistaken for metadata. Returns (YAML, bytes consumed, lines consumed).
+pub(crate) fn split_front_matter(input: &str) -> Option<(&str, usize, u32)> {
+    let mut lines = input.split_inclusive('\n');
+    let first = lines.next()?;
+    if first.trim_end() != "---" {
+        return None;
+    }
+    let yaml_start = first.len();
+    let mut offset = yaml_start;
+    let mut count = 1;
+    for line in lines {
+        count += 1;
+        let trimmed = line.trim_end();
+        if trimmed == "---" || trimmed == "..." {
+            let yaml = &input[yaml_start..offset];
+            let first_key = yaml.lines().find(|l| !l.trim().is_empty())?;
+            let key_len = first_key
+                .bytes()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+                .count();
+            let is_mapping = key_len > 0 && first_key[key_len..].trim_start().starts_with(':');
+            return is_mapping.then_some((yaml, offset + line.len(), count));
+        }
+        offset += line.len();
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -911,6 +952,7 @@ impl<'a> Parser<'a> {
         Document {
             blocks,
             link_defs: self.link_defs,
+            front_matter: None,
         }
     }
 }

@@ -21,6 +21,19 @@ pub const PRELUDE: &str = r#"// mdpdf helper functions
   radius: 1.5pt,
   if checked { place(center + horizon, text(size: 0.75em, weight: "bold", "✓")) },
 )
+
+// Title block from the front matter. A custom template may redefine this function.
+#let mdpdf-title(title: none, author: (), date: none) = align(center, block(below: 2em, {
+  if title != none { text(size: 1.8em, weight: "bold", title) }
+  if author.len() > 0 {
+    v(0.8em, weak: true)
+    text(size: 1.1em, author.join(", "))
+  }
+  if date != none {
+    v(0.5em, weak: true)
+    text(fill: luma(90), date)
+  }
+}))
 "#;
 
 /// Added only when the document contains math: MiTeX converts LaTeX to Typst math syntax on the
@@ -46,6 +59,103 @@ pub struct Options {
     pub parse: mdparse::Options,
     /// Formulas forced to raw text (indices into [`Output::formulas`]), used to retry after a Typst layout failure.
     pub math_fallback: HashSet<usize>,
+    /// Style settings applied on top of the template.
+    pub style: Style,
+    /// Custom template source used instead of [`TEMPLATE`].
+    pub template: Option<String>,
+}
+
+/// Document settings emitted after the template, so they override it.
+///
+/// Values must already be validated: font names are emitted as string literals, but `margin` is
+/// emitted verbatim as a Typst length.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Style {
+    /// Body font fallback list; empty keeps the template's fonts.
+    pub body_fonts: Vec<String>,
+    /// Monospace font fallback list; empty keeps the template's fonts.
+    pub mono_fonts: Vec<String>,
+    /// A Typst paper name such as `a4` or `us-letter`.
+    pub paper: Option<String>,
+    /// A Typst length such as `2cm`.
+    pub margin: Option<String>,
+    /// Insert a table of contents after the title.
+    pub toc: bool,
+    /// Number headings as 1, 1.1, 1.1.1, ...
+    pub number_headings: bool,
+    /// Path of a `.tmTheme` syntax highlighting theme.
+    pub code_theme: Option<String>,
+    /// Title, authors and date shown in the title block and PDF metadata.
+    pub title: Option<String>,
+    pub authors: Vec<String>,
+    pub date: Option<String>,
+}
+
+impl Style {
+    fn write(&self, out: &mut String) {
+        let list = |out: &mut String, items: &[String]| {
+            out.push('(');
+            for item in items {
+                push_str_literal(out, item);
+                out.push_str(", ");
+            }
+            out.push(')');
+        };
+        if !self.body_fonts.is_empty() {
+            out.push_str("#set text(font: ");
+            list(out, &self.body_fonts);
+            out.push_str(")\n");
+        }
+        if !self.mono_fonts.is_empty() {
+            out.push_str("#show raw: set text(font: ");
+            list(out, &self.mono_fonts);
+            out.push_str(")\n");
+        }
+        if let Some(paper) = &self.paper {
+            out.push_str("#set page(paper: ");
+            push_str_literal(out, paper);
+            out.push_str(")\n");
+        }
+        if let Some(margin) = &self.margin {
+            writeln!(out, "#set page(margin: {margin})").unwrap();
+        }
+        if self.number_headings {
+            out.push_str("#set heading(numbering: \"1.1\")\n");
+        }
+        if let Some(theme) = &self.code_theme {
+            out.push_str("#set raw(theme: ");
+            push_str_literal(out, theme);
+            out.push_str(")\n");
+        }
+        if let Some(title) = &self.title {
+            out.push_str("#set document(title: ");
+            push_str_literal(out, title);
+            out.push_str(")\n");
+        }
+        if !self.authors.is_empty() {
+            out.push_str("#set document(author: ");
+            list(out, &self.authors);
+            out.push_str(")\n");
+        }
+        if self.title.is_some() || !self.authors.is_empty() || self.date.is_some() {
+            out.push_str("#mdpdf-title(title: ");
+            match &self.title {
+                Some(title) => push_str_literal(out, title),
+                None => out.push_str("none"),
+            }
+            out.push_str(", author: ");
+            list(out, &self.authors);
+            out.push_str(", date: ");
+            match &self.date {
+                Some(date) => push_str_literal(out, date),
+                None => out.push_str("none"),
+            }
+            out.push_str(")\n");
+        }
+        if self.toc {
+            out.push_str("#outline()\n");
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +189,7 @@ pub fn convert(markdown: &str, options: &Options) -> Output {
     let mut prefix = String::with_capacity(PRELUDE.len() + TEMPLATE.len() + 2);
     prefix.push_str(PRELUDE);
     prefix.push('\n');
-    prefix.push_str(TEMPLATE);
+    prefix.push_str(options.template.as_deref().unwrap_or(TEMPLATE));
     prefix.push('\n');
     assemble(prefix, markdown, options)
 }
@@ -96,6 +206,10 @@ fn assemble(mut source: String, markdown: &str, options: &Options) -> Output {
     let uses_math = write_body(&mut body, &mut warnings, &mut formulas, markdown, options);
     if uses_math {
         source.push_str(MATH_PRELUDE);
+        source.push('\n');
+    }
+    options.style.write(&mut source);
+    if options.style != Style::default() {
         source.push('\n');
     }
     let offset = source.len();
@@ -864,6 +978,49 @@ mod tests {
             typst("Vec<String> 與 Option<T>"),
             "#\"Vec<String> 與 Option<T>\"\n"
         );
+    }
+
+    #[test]
+    fn style_settings() {
+        let style = Style {
+            body_fonts: vec!["Libertinus Serif".into(), "Noto Sans TC".into()],
+            mono_fonts: vec!["Fira Code".into()],
+            paper: Some("us-letter".into()),
+            margin: Some("2cm".into()),
+            toc: true,
+            number_headings: true,
+            code_theme: Some("/t/x.tmTheme".into()),
+            title: Some("報告 \"Q3\"".into()),
+            authors: vec!["A".into(), "B".into()],
+            date: None,
+        };
+        let out = body(
+            "text",
+            &Options {
+                style,
+                ..Default::default()
+            },
+        )
+        .source;
+        let expected = [
+            "#set text(font: (\"Libertinus Serif\", \"Noto Sans TC\", ))",
+            "#show raw: set text(font: (\"Fira Code\", ))",
+            "#set page(paper: \"us-letter\")",
+            "#set page(margin: 2cm)",
+            "#set heading(numbering: \"1.1\")",
+            "#set raw(theme: \"/t/x.tmTheme\")",
+            "#set document(title: \"報告 \\\"Q3\\\"\")",
+            "#set document(author: (\"A\", \"B\", ))",
+            "#mdpdf-title(title: \"報告 \\\"Q3\\\"\", author: (\"A\", \"B\", ), date: none)",
+            "#outline()",
+        ];
+        for line in expected {
+            assert!(out.contains(line), "missing {line:?} in:\n{out}");
+        }
+        assert!(out.ends_with("#\"text\"\n"));
+
+        // Default style emits nothing
+        assert_eq!(typst("text"), "#\"text\"\n");
     }
 
     #[test]

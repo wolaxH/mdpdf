@@ -1,4 +1,9 @@
-# mdpdf 第三季開發報告
+---
+title: mdpdf 第三季開發報告
+author: Etho
+date: 2026-09-28
+toc: true
+---
 
 本報告整理 **mdpdf** 專案在第三季的進度、技術決策與下一步規劃。
 mdpdf 是一個以 Rust 撰寫的命令列工具，能把 Markdown 報告直接轉成 PDF，

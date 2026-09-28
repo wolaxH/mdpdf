@@ -18,6 +18,8 @@ pub struct Document<'a> {
     pub blocks: Vec<Block<'a>>,
     /// Link reference definitions, keyed by normalized label.
     pub link_defs: HashMap<String, LinkDef<'a>>,
+    /// Raw YAML of the front matter block, without the `---` delimiters.
+    pub front_matter: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

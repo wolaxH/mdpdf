@@ -63,3 +63,12 @@
     super(number), it.note.body,
   )
 }
+
+// Noto Sans TC has no italic and Typst does not synthesize one, so emphasis is slanted with a
+// skew. Each CJK character and each Latin word is skewed on its own, so lines can still break.
+// Real italics are turned off first, keeping the slant consistent for fonts that do have them.
+#show emph: it => {
+  set text(style: "normal")
+  show regex("\p{Han}|\p{Hiragana}|\p{Katakana}|\p{Hangul}|[^\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\s]+"): w => box(skew(ax: -12deg, reflow: false, w))
+  it.body
+}

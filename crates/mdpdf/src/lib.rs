@@ -1,6 +1,7 @@
 //! mdpdf: Markdown → Typst → PDF.
 
 pub mod fonts;
+pub mod settings;
 pub mod world;
 
 use std::path::Path;
@@ -19,6 +20,8 @@ pub use world::MdWorld;
 pub struct Pdf {
     pub bytes: Vec<u8>,
     pub pages: usize,
+    /// Size of the first page in points (width, height).
+    pub page_size: (f64, f64),
 }
 
 /// Compile the main file of the World and export a PDF.
@@ -26,9 +29,11 @@ pub fn compile_pdf(world: &MdWorld) -> Warned<SourceResult<Pdf>> {
     let Warned { output, warnings } = typst::compile::<PagedDocument>(world);
     let output = output.and_then(|doc| {
         let bytes = typst_pdf::pdf(&doc, &PdfOptions::default())?;
+        let size = doc.pages().first().map(|page| page.frame.size());
         Ok(Pdf {
             bytes,
             pages: doc.pages().len(),
+            page_size: size.map_or((0.0, 0.0), |s| (s.x.to_pt(), s.y.to_pt())),
         })
     });
     Warned { output, warnings }

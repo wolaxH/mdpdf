@@ -28,6 +28,9 @@ pub struct Options {
     /// mdpdf extension: a line containing only `<!-- pagebreak -->` starts a new page.
     /// It is a valid HTML comment, so other Markdown tools simply hide it.
     pub page_break: bool,
+    /// A YAML front matter block delimited by `---` at the very start of the document is
+    /// extracted into [`Document::front_matter`] instead of being parsed as Markdown.
+    pub front_matter: bool,
 }
 
 impl Default for Options {
@@ -37,6 +40,7 @@ impl Default for Options {
             cjk_emphasis: true,
             math: true,
             page_break: true,
+            front_matter: true,
         }
     }
 }
@@ -49,8 +53,14 @@ impl Options {
             cjk_emphasis: false,
             math: false,
             page_break: false,
+            front_matter: false,
         }
     }
+}
+
+/// The raw YAML of a leading front matter block, without parsing the rest of the document.
+pub fn front_matter(input: &str) -> Option<&str> {
+    block::split_front_matter(input).map(|(yaml, _, _)| yaml)
 }
 
 /// Parse a Markdown document with the default options.

@@ -41,6 +41,30 @@ fn page_break_marker() {
 }
 
 #[test]
+fn front_matter() {
+    let doc = parse("---\ntitle: 報告\nauthor: [A, B]\n---\n\n# 標題\n");
+    assert_eq!(
+        doc.front_matter.as_deref(),
+        Some("title: 報告\nauthor: [A, B]\n")
+    );
+    // Lines inside the front matter still count toward block spans
+    assert_eq!(doc.blocks[0].span.line, 6);
+
+    // A thematic break followed by a setext heading is not front matter
+    assert_eq!(
+        kinds("---\nText\n---\n", Options::default()),
+        ["ThematicBreak", "h"]
+    );
+    // Unclosed or disabled front matter is parsed as Markdown
+    assert!(parse("---\ntitle: x\n").front_matter.is_none());
+    assert!(
+        parse_with("---\ntitle: x\n---\n", Options::commonmark())
+            .front_matter
+            .is_none()
+    );
+}
+
+#[test]
 fn math_blocks() {
     assert_eq!(
         kinds(

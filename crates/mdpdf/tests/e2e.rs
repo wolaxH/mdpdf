@@ -6,6 +6,14 @@ use mdpdf::fonts::{self, FontOptions};
 
 /// Convert a fixture and require it to compile. Returns the PDF and Markdown-level warnings.
 fn render_with_warnings(name: &str) -> (mdpdf::Pdf, Vec<md2typst::Warning>) {
+    render_with(name, |_| {})
+}
+
+/// Like [`render_with_warnings`], with a hook to adjust the codegen options.
+fn render_with(
+    name: &str,
+    adjust: impl FnOnce(&mut md2typst::Options),
+) -> (mdpdf::Pdf, Vec<md2typst::Warning>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures")
         .canonicalize()
@@ -17,10 +25,11 @@ fn render_with_warnings(name: &str) -> (mdpdf::Pdf, Vec<md2typst::Warning>) {
         ..Default::default()
     })
     .unwrap();
-    let options = md2typst::Options {
+    let mut options = md2typst::Options {
         base_dir: Some(dir.clone()),
         ..Default::default()
     };
+    adjust(&mut options);
     let rendered = mdpdf::render(&markdown, &dir.join("main.typ"), options, fonts).unwrap();
     let pdf = rendered
         .result
@@ -102,4 +111,50 @@ fn m4_math_falls_back_on_bad_formulas() {
 fn page_break_starts_new_page() {
     let pdf = render("pagebreak.md");
     assert_eq!(pdf.pages, 3);
+}
+
+fn assert_size(pdf: &mdpdf::Pdf, expected: (f64, f64)) {
+    let (w, h) = pdf.page_size;
+    assert!(
+        (w - expected.0).abs() < 0.1 && (h - expected.1).abs() < 0.1,
+        "expected {expected:?}, got ({w}, {h})"
+    );
+}
+
+const A4: (f64, f64) = (595.28, 841.89);
+const A5: (f64, f64) = (419.53, 595.28);
+
+#[test]
+#[cfg(feature = "embed-cjk")]
+fn page_size_follows_settings() {
+    assert_size(&render("m0-demo.md"), A4);
+
+    let (pdf, _) = render_with("m0-demo.md", |o| o.style.paper = Some("a5".into()));
+    assert_size(&pdf, A5);
+
+    let template = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/templates/custom.typ"),
+    )
+    .unwrap();
+    let (pdf, _) = render_with("m0-demo.md", |o| o.template = Some(template));
+    assert_size(&pdf, A5);
+}
+
+#[test]
+#[cfg(feature = "embed-cjk")]
+fn m5_front_matter_title_and_toc() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    let markdown = std::fs::read_to_string(dir.join("m5-settings.md")).unwrap();
+    let yaml = mdparse::front_matter(&markdown).unwrap();
+    let (meta, settings) = mdpdf::settings::parse_front_matter(yaml, &dir).unwrap();
+    let book = fonts::load(&FontOptions {
+        system_fonts: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let resolved = mdpdf::settings::resolve(&settings, meta, book.book()).unwrap();
+    assert!(resolved.style.toc && resolved.style.number_headings);
+    let (pdf, warnings) = render_with("m5-settings.md", |o| o.style = resolved.style);
+    assert!(warnings.is_empty(), "{warnings:#?}");
+    assert_eq!(pdf.pages, 1);
 }
