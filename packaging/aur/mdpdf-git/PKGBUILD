@@ -6,8 +6,7 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc='Convert Markdown reports to PDF with an embedded Typst engine (CJK, math, GFM)'
 arch=('x86_64' 'aarch64')
-# TODO: replace with the public repository once it exists.
-url='https://github.com/CHANGE_ME/mdpdf'
+url='https://github.com/wolaxH/mdpdf'
 license=('GPL-3.0-or-later' 'Apache-2.0' 'OFL-1.1')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo' 'git')

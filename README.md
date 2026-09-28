@@ -21,10 +21,10 @@ mdpdf report.md            # writes report.pdf
 
 ## Installation
 
-mdpdf is not yet published. Build it from source with a recent stable Rust toolchain:
+Build from source with a recent stable Rust toolchain:
 
 ```sh
-git clone <repository> mdpdf && cd mdpdf
+git clone https://github.com/wolaxH/mdpdf && cd mdpdf
 scripts/fetch-fonts.sh               # downloads Noto Sans TC into assets/fonts/
 cargo install --path crates/mdpdf
 ```
