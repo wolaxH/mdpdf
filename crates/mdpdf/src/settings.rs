@@ -71,9 +71,15 @@ impl Settings {
         }
     }
 
-    /// Make relative paths absolute, relative to `base` (the directory of the file they came from).
+    /// Make relative paths absolute, relative to `base` (the directory of the file they came
+    /// from). A leading `~/` refers to the home directory.
     pub fn resolve_paths(mut self, base: &Path) -> Self {
-        let abs = |p: PathBuf| if p.is_absolute() { p } else { base.join(p) };
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let abs = |p: PathBuf| match (p.strip_prefix("~"), &home) {
+            (Ok(rest), Some(home)) => home.join(rest),
+            _ if p.is_absolute() => p,
+            _ => base.join(p),
+        };
         self.font_path = self
             .font_path
             .map(|paths| paths.into_iter().map(abs).collect());
@@ -311,6 +317,24 @@ mod tests {
         let err = load_config(&path).unwrap_err().to_string();
         assert!(err.contains("papr"), "{err}");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn paths_resolve_against_base_and_home() {
+        let settings = Settings {
+            font_path: Some(vec!["fonts".into(), "/abs".into(), "~/my-fonts".into()]),
+            ..Default::default()
+        }
+        .resolve_paths(Path::new("/base"));
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(
+            settings.font_path.unwrap(),
+            [
+                PathBuf::from("/base/fonts"),
+                PathBuf::from("/abs"),
+                home.join("my-fonts")
+            ]
+        );
     }
 
     #[test]

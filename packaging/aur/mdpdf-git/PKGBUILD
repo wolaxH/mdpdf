@@ -1,0 +1,63 @@
+# Maintainer: Etho <leseshen@gmail.com>
+
+pkgname=mdpdf-git
+_pkgname=mdpdf
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Convert Markdown reports to PDF with an embedded Typst engine (CJK, math, GFM)'
+arch=('x86_64' 'aarch64')
+# TODO: replace with the public repository once it exists.
+url='https://github.com/CHANGE_ME/mdpdf'
+license=('MIT OR Apache-2.0' 'Apache-2.0' 'OFL-1.1')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+_fonts='https://github.com/notofonts/noto-cjk/raw/Sans2.004'
+source=("$_pkgname::git+$url.git"
+        "NotoSansTC-Regular-2.004.otf::$_fonts/Sans/SubsetOTF/TC/NotoSansTC-Regular.otf"
+        "NotoSansTC-Bold-2.004.otf::$_fonts/Sans/SubsetOTF/TC/NotoSansTC-Bold.otf"
+        "NotoSans-LICENSE-2.004::$_fonts/LICENSE")
+sha256sums=('SKIP'
+            '5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537'
+            '55420b259eb119bf5f2a0aadba10cf9d736c12d64ab93e78546d69ef5f43558b'
+            '6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2')
+
+pkgver() {
+  cd "$_pkgname"
+  local version
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  # The embedded fonts are not stored in git; place the pinned downloads where build.rs expects them.
+  install -Dm644 ../NotoSansTC-Regular-2.004.otf assets/fonts/NotoSansTC-Regular.otf
+  install -Dm644 ../NotoSansTC-Bold-2.004.otf assets/fonts/NotoSansTC-Bold.otf
+  install -Dm644 ../NotoSans-LICENSE-2.004 assets/fonts/LICENSE
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p mdpdf
+}
+
+check() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/mdpdf "$pkgdir/usr/bin/mdpdf"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm644 assets/fonts/LICENSE "$pkgdir/usr/share/licenses/$pkgname/OFL-NotoSansTC"
+  install -Dm644 assets/typst-packages/mdpdf/mitex-scope/0.2.4/LICENSE \
+    "$pkgdir/usr/share/licenses/$pkgname/Apache-2.0-MiTeX"
+}

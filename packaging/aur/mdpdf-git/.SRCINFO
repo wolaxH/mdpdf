@@ -1,0 +1,26 @@
+pkgbase = mdpdf-git
+	pkgdesc = Convert Markdown reports to PDF with an embedded Typst engine (CJK, math, GFM)
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/CHANGE_ME/mdpdf
+	arch = x86_64
+	arch = aarch64
+	license = MIT OR Apache-2.0
+	license = Apache-2.0
+	license = OFL-1.1
+	makedepends = cargo
+	makedepends = git
+	depends = gcc-libs
+	depends = glibc
+	provides = mdpdf
+	conflicts = mdpdf
+	source = mdpdf::git+https://github.com/CHANGE_ME/mdpdf.git
+	source = NotoSansTC-Regular-2.004.otf::https://github.com/notofonts/noto-cjk/raw/Sans2.004/Sans/SubsetOTF/TC/NotoSansTC-Regular.otf
+	source = NotoSansTC-Bold-2.004.otf::https://github.com/notofonts/noto-cjk/raw/Sans2.004/Sans/SubsetOTF/TC/NotoSansTC-Bold.otf
+	source = NotoSans-LICENSE-2.004::https://github.com/notofonts/noto-cjk/raw/Sans2.004/LICENSE
+	sha256sums = SKIP
+	sha256sums = 5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537
+	sha256sums = 55420b259eb119bf5f2a0aadba10cf9d736c12d64ab93e78546d69ef5f43558b
+	sha256sums = 6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2
+
+pkgname = mdpdf-git
