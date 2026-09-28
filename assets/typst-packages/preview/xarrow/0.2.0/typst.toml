@@ -1,5 +1,5 @@
-# mdpdf 自製的 xarrow 相容層，取代原本的 xarrow 0.2.0：
-# 原套件使用 Typst 0.13 已移除的 style()，無法在 Typst 0.15 編譯。
+# mdpdf's own xarrow compatibility shim, replacing the original xarrow 0.2.0:
+# the original uses style(), which was removed in Typst 0.13, so it cannot compile on Typst 0.15.
 [package]
 name = "xarrow"
 version = "0.2.0"

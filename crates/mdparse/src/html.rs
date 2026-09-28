@@ -1,4 +1,4 @@
-//! HTML renderer，輸出格式與 CommonMark／GFM 參考實作一致，專門用來跑規格測試。
+//! HTML renderer whose output matches the CommonMark/GFM reference implementations; used for spec tests.
 
 use std::collections::HashMap;
 
@@ -38,12 +38,12 @@ fn collect_footnotes<'d, 'a>(blocks: &'d [Block<'a>], defs: &mut HashMap<String,
 struct Renderer<'d, 'a> {
     out: String,
     footnote_defs: HashMap<String, &'d [Block<'a>]>,
-    /// 依第一次被引用的順序排列的腳註標籤。
+    /// Footnote labels in order of first reference.
     footnote_order: Vec<String>,
 }
 
 impl<'d, 'a> Renderer<'d, 'a> {
-    /// 換行，但不重複輸出。
+    /// Emit a newline unless the output already ends with one.
     fn cr(&mut self) {
         if !self.out.is_empty() && !self.out.ends_with('\n') {
             self.out.push('\n');
@@ -147,7 +147,7 @@ impl<'d, 'a> Renderer<'d, 'a> {
                 }
                 self.out.push_str("</table>\n");
             }
-            // 腳註內容在文件末尾輸出
+            // Footnote bodies are emitted at the end of the document
             BlockKind::FootnoteDef { .. } => {}
             BlockKind::PageBreak => {
                 self.cr();
@@ -265,7 +265,7 @@ impl<'d, 'a> Renderer<'d, 'a> {
         self.out.push_str("</tr>\n");
     }
 
-    /// 被引用過的腳註，依引用順序輸出。腳註內再引用新腳註時會接在後面。
+    /// Referenced footnotes in reference order. New references made inside a footnote are appended.
     fn footnotes(&mut self) {
         if self.footnote_order.is_empty() {
             return;
@@ -295,7 +295,7 @@ impl<'d, 'a> Renderer<'d, 'a> {
     }
 }
 
-/// 圖片 alt：只保留文字，與參考實作相同。
+/// Image alt text: text only, as in the reference implementation.
 fn alt_text(inlines: &[Inline], out: &mut String) {
     for inline in inlines {
         match inline {
@@ -311,7 +311,7 @@ fn alt_text(inlines: &[Inline], out: &mut String) {
     }
 }
 
-/// 百分比編碼 URL 中不安全的字元，保留既有的 `%XX` 序列。
+/// Percent-encode unsafe characters in a URL, keeping existing `%XX` sequences.
 fn normalize_uri(url: &str) -> String {
     const SAFE: &[u8] = b";/?:@&=+$,-_.!~*'()#";
     let b = url.as_bytes();

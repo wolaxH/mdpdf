@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""從 cmark-gfm 的測試檔抽出 GFM 擴充語法範例，存成 tests/spec/gfm-extensions.json。
+"""Extract the GFM extension examples from the cmark-gfm test files into tests/spec/gfm-extensions.json.
 
-用法：scripts/extract-gfm-spec.py <cmark-gfm/test/spec.txt> <cmark-gfm/test/extensions.txt>
+Usage: scripts/extract-gfm-spec.py <cmark-gfm/test/spec.txt> <cmark-gfm/test/extensions.txt>
 """
 
 import json

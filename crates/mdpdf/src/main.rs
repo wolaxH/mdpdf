@@ -11,35 +11,32 @@ use typst::diag::SourceDiagnostic;
 use typst_kit::diagnostics::termcolor::{ColorChoice, StandardStream};
 use typst_kit::diagnostics::{DiagnosticFormat, emit};
 
-/// 把 Markdown 轉成 PDF。
+// Help text is user-facing, so it lives in `help`/`about` strings rather than doc comments.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(version, about = "把 Markdown 轉成 PDF")]
 struct Cli {
-    /// 輸入的 Markdown 檔，`-` 代表 stdin
+    #[arg(help = "輸入的 Markdown 檔，`-` 代表 stdin")]
     input: PathBuf,
 
-    /// 輸出路徑（預設：輸入檔名.pdf；`-` 代表 stdout）
-    #[arg(short, long)]
+    #[arg(short, long, help = "輸出路徑（預設：輸入檔名.pdf；`-` 代表 stdout）")]
     output: Option<PathBuf>,
 
-    /// 另存中間產生的 Typst 原始碼
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", help = "另存中間產生的 Typst 原始碼")]
     emit_typst: Option<PathBuf>,
 
-    /// 額外字型檔或目錄（可重複指定）
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", help = "額外字型檔或目錄（可重複指定）")]
     font_path: Vec<PathBuf>,
 
-    /// 不讀取系統字型
-    #[arg(long)]
+    #[arg(long, help = "不讀取系統字型")]
     no_system_fonts: bool,
 
-    /// 警告視為錯誤（例如找不到圖片）
-    #[arg(long)]
+    #[arg(long, help = "警告視為錯誤（例如找不到圖片）")]
     strict: bool,
 
-    /// 關閉 CJK 寬鬆強調，完全依照 CommonMark 規則判斷 `**` 能否成立
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "關閉 CJK 寬鬆強調，完全依照 CommonMark 規則判斷 `**` 能否成立"
+    )]
     no_cjk_emphasis: bool,
 }
 

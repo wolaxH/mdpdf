@@ -1,6 +1,6 @@
-//! 自製 CommonMark + GFM Markdown parser，沒有外部相依。
+//! Hand-written CommonMark + GFM Markdown parser with no external dependencies.
 //!
-//! 採用規格建議的兩階段解析：[`block`] 先建立區塊樹，再由 [`inline`] 逐段解析行內內容。
+//! Parsing follows the two-phase strategy suggested by the spec: [`block`] builds the block tree, then [`inline`] parses the content of each leaf.
 
 pub mod ast;
 mod block;
@@ -15,18 +15,18 @@ mod unicode;
 pub use ast::*;
 pub use scan::{is_cjk, normalize_label};
 
-/// 解析選項。預設開啟所有擴充。
+/// Parsing options. All extensions are enabled by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
-    /// GFM 擴充：表格、刪除線、任務清單、腳註。
+    /// GFM extensions: tables, strikethrough, task lists, footnotes.
     pub gfm: bool,
-    /// CJK 寬鬆強調：強調符號外側緊鄰中日韓文字時，也視為可以開啟／關閉強調，
-    /// 讓 `這是**「重點」**這樣` 能正確變成粗體。標準 CommonMark 不允許。
+    /// CJK-friendly emphasis: a delimiter run directly next to a CJK character on its outer side
+    /// may still open or close emphasis, so `這是**「重點」**這樣` becomes bold. Plain CommonMark forbids this.
     pub cjk_emphasis: bool,
-    /// 數學公式：行內 `$...$`、區塊 `$$...$$` 與 ```` ```math ````。內容為 LaTeX 原文。
+    /// Math: inline `$...$`, display `$$...$$` and ```` ```math ````. The content is LaTeX source.
     pub math: bool,
-    /// mdpdf 擴充：單獨一行的 `<!-- pagebreak -->` 代表換頁。
-    /// 它本身是合法的 HTML 註解，在其他 Markdown 工具中不會顯示。
+    /// mdpdf extension: a line containing only `<!-- pagebreak -->` starts a new page.
+    /// It is a valid HTML comment, so other Markdown tools simply hide it.
     pub page_break: bool,
 }
 
@@ -42,7 +42,7 @@ impl Default for Options {
 }
 
 impl Options {
-    /// 純 CommonMark，不含任何擴充。
+    /// Plain CommonMark without any extension.
     pub const fn commonmark() -> Self {
         Self {
             gfm: false,
@@ -53,7 +53,7 @@ impl Options {
     }
 }
 
-/// 以預設選項解析 Markdown 文件。
+/// Parse a Markdown document with the default options.
 pub fn parse(input: &str) -> Document<'_> {
     parse_with(input, Options::default())
 }

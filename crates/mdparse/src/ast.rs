@@ -1,12 +1,12 @@
-//! Markdown 抽象語法樹。
+//! Markdown abstract syntax tree.
 //!
-//! 文字以 `Cow<'a, str>` 引用原始輸入；只有跳脫字元、跨越容器前綴的多行內容等
-//! 無法直接切片的情況才配置新字串。
+//! Text borrows from the input as `Cow<'a, str>`; a new string is allocated only when the
+//! text cannot be sliced directly, e.g. after unescaping or for lines spanning container prefixes.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-/// 原始輸入中的位置（皆從 1 起算，欄位以字元計）。
+/// A position in the input (1-based; columns count characters).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub line: u32,
@@ -16,7 +16,7 @@ pub struct Span {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document<'a> {
     pub blocks: Vec<Block<'a>>,
-    /// 連結參照定義，key 為正規化後的標籤。
+    /// Link reference definitions, keyed by normalized label.
     pub link_defs: HashMap<String, LinkDef<'a>>,
 }
 
@@ -41,37 +41,37 @@ pub enum BlockKind<'a> {
     Paragraph(Vec<Inline<'a>>),
     BlockQuote(Vec<Block<'a>>),
     List {
-        /// 有序清單的起始編號；`None` 為無序清單。
+        /// Start number of an ordered list; `None` for a bullet list.
         ordered: Option<u32>,
         tight: bool,
         items: Vec<ListItem<'a>>,
     },
     CodeBlock {
-        /// info string 的第一個詞。
+        /// First word of the info string.
         lang: Option<Cow<'a, str>>,
         code: Cow<'a, str>,
     },
-    /// 原始 HTML 區塊：只辨識，不渲染。
+    /// Raw HTML block: recognized but not rendered.
     Html(Cow<'a, str>),
     ThematicBreak,
-    /// 換頁（mdpdf 擴充，見 [`crate::Options::page_break`]）。
+    /// Page break (mdpdf extension, see [`crate::Options::page_break`]).
     PageBreak,
-    /// 區塊數學公式，內容為 LaTeX 原文。
+    /// Display math; the content is LaTeX source.
     MathBlock(Cow<'a, str>),
-    /// GFM 表格。表頭與每一列的儲存格數都等於 `align.len()`。
+    /// GFM table. The header and every row have exactly `align.len()` cells.
     Table {
         align: Vec<Align>,
         head: Vec<Cell<'a>>,
         rows: Vec<Vec<Cell<'a>>>,
     },
-    /// 腳註定義。`label` 為原始標籤，比對時以 [`crate::normalize_label`] 正規化。
+    /// Footnote definition. `label` is the raw label; compare via [`crate::normalize_label`].
     FootnoteDef {
         label: Cow<'a, str>,
         blocks: Vec<Block<'a>>,
     },
 }
 
-/// 表格欄位的對齊方式。
+/// Column alignment of a table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Align {
     None,
@@ -80,14 +80,14 @@ pub enum Align {
     Right,
 }
 
-/// 表格儲存格的內容。
+/// Content of a table cell.
 pub type Cell<'a> = Vec<Inline<'a>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListItem<'a> {
     pub blocks: Vec<Block<'a>>,
     pub span: Span,
-    /// GFM 任務清單項目：`Some(true)` 為已勾選。
+    /// GFM task list item: `Some(true)` when checked.
     pub task: Option<bool>,
 }
 
@@ -97,25 +97,25 @@ pub enum Inline<'a> {
     Code(Cow<'a, str>),
     Emph(Vec<Inline<'a>>),
     Strong(Vec<Inline<'a>>),
-    /// GFM 刪除線。
+    /// GFM strikethrough.
     Strike(Vec<Inline<'a>>),
-    /// 腳註參照，內容為原始標籤。只有對應的定義存在時才會產生。
+    /// Footnote reference with its raw label. Only produced when a matching definition exists.
     FootnoteRef(Cow<'a, str>),
-    /// 連結。`url` 已處理跳脫與字元參照，但未做百分比編碼。
+    /// Link. `url` is unescaped with entities decoded, but not percent-encoded.
     Link {
         url: Cow<'a, str>,
         title: Option<Cow<'a, str>>,
         content: Vec<Inline<'a>>,
     },
-    /// 圖片。`alt` 保留 inline 結構，需要純文字時用 [`plain_text`]。
+    /// Image. `alt` keeps its inline structure; use [`plain_text`] for plain text.
     Image {
         url: Cow<'a, str>,
         title: Option<Cow<'a, str>>,
         alt: Vec<Inline<'a>>,
     },
-    /// 行內原始 HTML：只辨識，不渲染。
+    /// Raw inline HTML: recognized but not rendered.
     Html(Cow<'a, str>),
-    /// 數學公式，內容為 LaTeX 原文。`display` 為段落中的 `$$...$$`。
+    /// Math; the content is LaTeX source. `display` is set for `$$...$$` inside a paragraph.
     Math {
         tex: Cow<'a, str>,
         display: bool,
@@ -159,7 +159,7 @@ impl Inline<'_> {
     }
 }
 
-/// inline 內容的純文字（用於圖片 alt 等）：去掉格式，換行轉為空白。
+/// Plain text of inline content (e.g. for image alt): formatting dropped, breaks become spaces.
 pub fn plain_text(inlines: &[Inline]) -> String {
     fn walk(inlines: &[Inline], out: &mut String) {
         for inline in inlines {

@@ -1,6 +1,6 @@
-//! 規格測試：把每個範例的 Markdown 渲染成 HTML 後與預期輸出比對。
+//! Spec tests: render each example's Markdown to HTML and compare with the expected output.
 //!
-//! 設定 `SPEC_VERBOSE=1` 可印出失敗的範例，`SPEC_SECTION=<名稱>` 只看某一節。
+//! Set `SPEC_VERBOSE=1` to print failing examples and `SPEC_SECTION=<name>` to limit them to one section.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -67,7 +67,7 @@ fn identity(html: &str) -> String {
     html.to_string()
 }
 
-/// cmark-gfm 不同版本的任務清單 `<input>` 屬性順序不同，比對前統一格式。
+/// cmark-gfm versions order the task list `<input>` attributes differently; normalize before comparing.
 fn normalize_checkbox(html: &str) -> String {
     html.replace(
         "<input type=\"checkbox\" checked=\"\" disabled=\"\" />",
@@ -85,7 +85,7 @@ fn commonmark_spec() {
     assert_eq!(report.passed, report.total, "CommonMark 規格必須全數通過");
 }
 
-/// 開啟所有擴充時，一般 CommonMark 文件的解析結果仍應幾乎不變。
+/// With all extensions enabled, plain CommonMark documents should still parse the same way.
 #[test]
 fn commonmark_spec_with_extensions() {
     let report = run("commonmark-0.31.2.json", Options::default(), identity);

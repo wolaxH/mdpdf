@@ -1,10 +1,10 @@
-//! 區塊階段：逐行掃描，建立區塊樹。
+//! Block phase: scan line by line and build the block tree.
 //!
-//! 採用 CommonMark 規格附錄建議的演算法：維護一條「開啟中的容器」路徑，每一行先嘗試
-//! 讓既有容器延續，再尋找新區塊的開頭，最後把剩下的文字交給葉節點。延續失敗但仍可
-//! 接到開啟中段落的行即為 lazy continuation。
+//! Uses the algorithm from the CommonMark spec appendix: keep a path of open containers; for each
+//! line, first let the open containers try to continue, then look for new block starts, and finally
+//! hand the remaining text to a leaf. A line that fails to continue but can still be appended to an open paragraph is a lazy continuation.
 //!
-//! 解析期間節點放在 arena（`Vec<Node>`）中，結束後再轉成 [`crate::ast`] 的樹。
+//! Nodes live in an arena (`Vec<Node>`) during parsing and are turned into the [`crate::ast`] tree at the end.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -35,7 +35,7 @@ pub fn parse(input: &str, options: Options) -> Document<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ListType {
     Bullet(u8),
-    /// 有序清單，帶分隔符 `.` 或 `)`。
+    /// Ordered list with delimiter `.` or `)`.
     Ordered(u8),
 }
 
@@ -43,9 +43,9 @@ enum ListType {
 struct ListData {
     ty: ListType,
     start: u32,
-    /// 標記相對於容器內容起點的縮排欄數。
+    /// Columns between the start of the container content and the marker.
     marker_offset: usize,
-    /// 標記寬度加上其後的空白，即內容相對於標記的欄數。
+    /// Marker width plus the following spaces, i.e. the content column relative to the marker.
     padding: usize,
 }
 
@@ -53,7 +53,7 @@ struct ListData {
 struct Fence {
     ch: u8,
     len: usize,
-    /// 開頭 fence 的縮排，內容行會移除至多這麼多的空白。
+    /// Indentation of the opening fence; up to this many spaces are removed from content lines.
     offset: usize,
 }
 
@@ -79,13 +79,13 @@ enum Kind {
     Html {
         kind: u8,
     },
-    /// GFM 表格。`lines[0]` 是表頭，`lines[1]` 是分隔列（略過），其後為資料列。
+    /// GFM table. `lines[0]` is the header, `lines[1]` the delimiter row (skipped), the rest are data rows.
     Table {
         align: Vec<Align>,
     },
-    /// 腳註定義，標籤存在 `content`。
+    /// Footnote definition; the label is stored in `content`.
     FootnoteDef,
-    /// 跨行的 `$$` 數學區塊。`offset` 是開頭 `$$` 的縮排，內容行會移除至多這麼多空白。
+    /// Multi-line `$$` math block. `offset` is the indentation of the opening `$$`; up to this many spaces are removed from content lines.
     MathBlock {
         offset: usize,
     },
@@ -114,7 +114,7 @@ impl Kind {
     }
 }
 
-/// 去除容器前綴後的一行內容。`pad` 是部分消耗的 tab 需補回的空白數。
+/// A line with container prefixes removed. `pad` is the number of spaces to restore for a partially consumed tab.
 #[derive(Debug, Clone, Copy)]
 struct Line<'a> {
     pad: usize,
@@ -130,16 +130,16 @@ struct Node<'a> {
     start: Span,
     end_line: u32,
     lines: Vec<Line<'a>>,
-    /// 段落與標題的最終文字內容；腳註定義的標籤。
+    /// Final text of paragraphs and headings; the label of footnote definitions.
     content: Cow<'a, str>,
-    /// 程式碼區塊的語言。
+    /// Language of a code block.
     lang: Option<Cow<'a, str>>,
 }
 
 enum Continue {
     Matched,
     Failed,
-    /// 這一行已被完全處理（例如 fence 結尾）。
+    /// The line has been fully handled (e.g. a closing fence).
     Consumed,
 }
 
@@ -154,7 +154,7 @@ struct Parser<'a> {
     options: Options,
     nodes: Vec<Node<'a>>,
     link_defs: HashMap<String, LinkDef<'a>>,
-    /// 已定義的腳註標籤（正規化後）。
+    /// Labels of defined footnotes (normalized).
     footnotes: HashSet<String>,
 
     tip: usize,
@@ -200,7 +200,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // ---- 行內游標 ----
+    // ---- line cursor ----
 
     fn peek(&self, pos: usize) -> Option<u8> {
         self.line.as_bytes().get(pos).copied()
@@ -225,7 +225,7 @@ impl<'a> Parser<'a> {
         self.indented = self.indent >= CODE_INDENT;
     }
 
-    /// 前進 `count` 個字元；`columns` 為真時以欄計，tab 可以只消耗一部分。
+    /// Advance `count` characters; with `columns`, count columns instead, so a tab may be partially consumed.
     fn advance_offset(&mut self, mut count: usize, columns: bool) {
         let bytes = self.line.as_bytes();
         while count > 0 && self.offset < bytes.len() {
@@ -264,7 +264,7 @@ impl<'a> Parser<'a> {
         self.advance_offset(self.line.len() - self.offset, false);
     }
 
-    // ---- 樹操作 ----
+    // ---- tree operations ----
 
     fn span_at(&self, offset: usize) -> Span {
         let col = self.line[..offset].chars().count() as u32 + 1;
@@ -307,7 +307,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // ---- 逐行處理 ----
+    // ---- line processing ----
 
     fn incorporate_line(&mut self, line: &'a str) {
         self.line = line;
@@ -318,7 +318,7 @@ impl<'a> Parser<'a> {
         self.partially_consumed_tab = false;
         self.old_tip = self.tip;
 
-        // 1. 讓開啟中的容器依序嘗試延續。
+        // 1. Let the open containers try to continue, in order.
         let mut container = ROOT;
         let mut all_matched = true;
         while let Some(&last) = self.nodes[container].children.last() {
@@ -342,8 +342,8 @@ impl<'a> Parser<'a> {
         self.all_closed = container == self.old_tip;
         self.last_matched = container;
 
-        // 2. 尋找新區塊的開頭。
-        // 段落與表格即使延續成功，這一行仍可能開始新區塊
+        // 2. Look for new block starts.
+        // Even when a paragraph or table continues, the line may still start a new block
         let mut matched_leaf = {
             let kind = &self.nodes[container].kind;
             !matches!(kind, Kind::Paragraph | Kind::Table { .. }) && kind.accepts_lines()
@@ -374,7 +374,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // 3. 剩下的文字加到適當的區塊。
+        // 3. Add the remaining text to the right block.
         if !self.all_closed && !self.blank && matches!(self.nodes[self.tip].kind, Kind::Paragraph) {
             // lazy continuation
             self.add_line();
@@ -413,7 +413,7 @@ impl<'a> Parser<'a> {
             Kind::Item { data } => {
                 if self.blank {
                     if self.nodes[id].children.is_empty() {
-                        // 清單項目最多只能以一個空行開頭
+                        // A list item can begin with at most one blank line
                         return Continue::Failed;
                     }
                     self.advance_next_nonspace();
@@ -471,7 +471,7 @@ impl<'a> Parser<'a> {
                     self.advance_offset(1, true);
                     i -= 1;
                 }
-                // 以 `$$` 結尾的行關閉區塊，`$$` 之前的內容仍屬於公式
+                // A line ending with `$$` closes the block; content before `$$` still belongs to the formula
                 let rest = self.line[self.offset..].trim_end_matches([' ', '\t']);
                 if let Some(content) = rest.strip_suffix("$$") {
                     if !scan::is_blank(content) {
@@ -504,7 +504,7 @@ impl<'a> Parser<'a> {
         let in_paragraph = matches!(self.nodes[container].kind, Kind::Paragraph);
 
         if !self.indented {
-            // 引言
+            // Block quote
             if first == Some(b'>') {
                 self.advance_next_nonspace();
                 self.advance_offset(1, false);
@@ -516,7 +516,7 @@ impl<'a> Parser<'a> {
                 return Start::Container;
             }
 
-            // ATX 標題
+            // ATX heading
             if let Some((level, content)) = atx_heading(rest) {
                 self.advance_next_nonspace();
                 self.close_unmatched_blocks();
@@ -526,7 +526,7 @@ impl<'a> Parser<'a> {
                 return Start::Leaf;
             }
 
-            // fenced 程式碼
+            // Fenced code
             if let Some(len) = code_fence(rest) {
                 let fence = Fence {
                     ch: rest.as_bytes()[0],
@@ -540,7 +540,7 @@ impl<'a> Parser<'a> {
                 return Start::Leaf;
             }
 
-            // `$$` 數學區塊：同一行關閉（`$$ x $$`）或延續到以 `$$` 結尾的行
+            // `$$` math block: closed on the same line (`$$ x $$`) or continued until a line ending with `$$`
             if self.options.math
                 && let Some(after) = rest.strip_prefix("$$")
             {
@@ -553,7 +553,7 @@ impl<'a> Parser<'a> {
                         self.finalize(id, self.line_number);
                         return Start::Leaf;
                     }
-                    // 同一行還有其他內容：當成段落中的行內公式
+                    // Other text follows on the same line: treat it as inline math in a paragraph
                     Some(_) => {}
                     None => {
                         let offset = self.indent;
@@ -566,7 +566,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // HTML 區塊：類型 7 不能打斷段落（包含 lazy continuation 中的段落）
+            // HTML block: type 7 cannot interrupt a paragraph (including a lazily continued one)
             let interrupts_paragraph = in_paragraph
                 || (!self.all_closed
                     && !self.blank
@@ -577,7 +577,7 @@ impl<'a> Parser<'a> {
                 return Start::Leaf;
             }
 
-            // 腳註定義 `[^label]:`（不能打斷段落）
+            // Footnote definition `[^label]:` (cannot interrupt a paragraph)
             if self.options.gfm
                 && !in_paragraph
                 && let Some(label) = footnote_def_label(rest)
@@ -591,7 +591,7 @@ impl<'a> Parser<'a> {
                 return Start::Container;
             }
 
-            // 表格：段落的最後一行是表頭，這一行是分隔列，且兩者欄數相同
+            // Table: the last paragraph line is the header, this line is the delimiter row, and their cell counts match
             if self.options.gfm
                 && in_paragraph
                 && let Some(align) = table_delimiter_row(rest)
@@ -605,7 +605,7 @@ impl<'a> Parser<'a> {
                     self.nodes[container].kind = Kind::Table { align };
                     container
                 } else {
-                    // 表頭之前的行仍是段落
+                    // Lines before the header remain a paragraph
                     self.nodes[container].lines = lines;
                     self.finalize(container, self.line_number - 2);
                     let id = self.add_child(Kind::Table { align }, 0);
@@ -620,7 +620,7 @@ impl<'a> Parser<'a> {
                 return Start::Leaf;
             }
 
-            // setext 標題
+            // Setext heading
             if in_paragraph && let Some(level) = setext_underline(rest) {
                 self.close_unmatched_blocks();
                 let consumed = self.extract_link_defs(container);
@@ -636,7 +636,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // 分隔線
+            // Thematic break
             if is_thematic_break(rest) {
                 self.close_unmatched_blocks();
                 self.add_child(Kind::ThematicBreak, self.next_nonspace);
@@ -645,7 +645,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // 清單項目
+        // List item
         if (!self.indented || matches!(self.nodes[container].kind, Kind::List { .. }))
             && let Some(data) = self.parse_list_marker(in_paragraph)
         {
@@ -661,7 +661,7 @@ impl<'a> Parser<'a> {
             return Start::Container;
         }
 
-        // 縮排程式碼：不能打斷段落或表格
+        // Indented code: cannot interrupt a paragraph or table
         if self.indented
             && !matches!(
                 self.nodes[self.tip].kind,
@@ -693,7 +693,7 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let start: u32 = rest[..digits].parse().ok()?;
-                // 打斷段落的有序清單必須從 1 開始
+                // An ordered list interrupting a paragraph must start at 1
                 if in_paragraph && start != 1 {
                     return None;
                 }
@@ -703,7 +703,7 @@ impl<'a> Parser<'a> {
         if !b.get(marker_len).is_none_or(|&c| scan::is_space_or_tab(c)) {
             return None;
         }
-        // 打斷段落的清單項目不能是空的
+        // A list item interrupting a paragraph must not be empty
         if in_paragraph && scan::is_blank(&rest[marker_len..]) {
             return None;
         }
@@ -723,7 +723,7 @@ impl<'a> Parser<'a> {
         let blank_item = self.offset >= self.line.len();
         let spaces_after = self.column - spaces_start_col;
         let padding = if !(1..5).contains(&spaces_after) || blank_item {
-            // 標記後有 5 格以上空白時，內容視為縮排程式碼，padding 只算一格
+            // With 5+ spaces after the marker the content is indented code, so padding counts only one space
             self.column = spaces_start_col;
             self.offset = spaces_start_offset;
             self.partially_consumed_tab = false;
@@ -742,7 +742,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // ---- 關閉區塊 ----
+    // ---- closing blocks ----
 
     fn finalize(&mut self, id: usize, line_number: u32) {
         let parent = self.nodes[id].parent;
@@ -762,7 +762,7 @@ impl<'a> Parser<'a> {
             Kind::CodeBlock { fence } => {
                 let mut lines = std::mem::take(&mut self.nodes[id].lines);
                 if fence.is_some() {
-                    // 第一行是 info string
+                    // The first line is the info string
                     let info = if lines.is_empty() {
                         ""
                     } else {
@@ -783,7 +783,7 @@ impl<'a> Parser<'a> {
                 let lines = std::mem::take(&mut self.nodes[id].lines);
                 self.nodes[id].content = self.join_lines(&lines, false);
             }
-            // 單行的數學區塊在建立時就已設定內容
+            // A single-line math block has its content set when it is created
             Kind::MathBlock { .. } if !self.nodes[id].lines.is_empty() => {
                 let lines = std::mem::take(&mut self.nodes[id].lines);
                 self.nodes[id].content = match self.join_lines(&lines, false) {
@@ -791,8 +791,8 @@ impl<'a> Parser<'a> {
                     Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
                 };
             }
-            // 清單與項目的結束行取最後一個子區塊，尾端的空行不算在內，
-            // 這樣「兩區塊間是否隔著空行」只需比較行號。
+            // Lists and items end at their last child; trailing blank lines are excluded, so
+            // "separated by a blank line" is a simple comparison of line numbers.
             Kind::Item { .. } | Kind::List { .. } => {
                 let node = &self.nodes[id];
                 let end = node
@@ -812,7 +812,7 @@ impl<'a> Parser<'a> {
         self.tip = parent;
     }
 
-    /// 清單中任兩個相鄰項目之間、或項目內任兩個相鄰區塊之間有空行時，清單為 loose。
+    /// A list is loose if any two adjacent items, or any two adjacent blocks inside an item, are separated by a blank line.
     fn is_tight(&self, list: usize) -> bool {
         let separated = |a: usize, b: usize| self.nodes[a].end_line + 1 != self.nodes[b].start.line;
         let items = &self.nodes[list].children;
@@ -830,7 +830,7 @@ impl<'a> Parser<'a> {
         true
     }
 
-    /// 從段落開頭解析連結參照定義並登記，回傳被定義佔用的行數。
+    /// Parse and register link reference definitions at the start of a paragraph; returns the number of lines they occupy.
     fn extract_link_defs(&mut self, id: usize) -> usize {
         let content = self.join_lines(&self.nodes[id].lines, false);
         let (consumed, defs) = match &content {
@@ -854,7 +854,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// 把多行接成一個字串。若這些行在原始輸入中本來就是連續的，直接借用原始輸入。
+    /// Join lines into one string, borrowing from the input when the lines are already contiguous there.
     fn join_lines(&self, lines: &[Line<'a>], trailing_newline: bool) -> Cow<'a, str> {
         let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
             return Cow::Borrowed("");
@@ -892,7 +892,7 @@ impl<'a> Parser<'a> {
         Cow::Owned(out)
     }
 
-    // ---- 輸出 ----
+    // ---- output ----
 
     fn finish(mut self) -> Document<'a> {
         while self.tip != ROOT {
@@ -957,7 +957,7 @@ fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>)
                 .map(|&item| build_item(nodes, item, ctx))
                 .collect(),
         },
-        // ```math 視為數學區塊
+        // ```math is a math block
         Kind::CodeBlock { .. } if ctx.options.math && node.lang.as_deref() == Some("math") => {
             BlockKind::MathBlock(match node.content {
                 Cow::Borrowed(s) => Cow::Borrowed(s.trim_end()),
@@ -1004,7 +1004,7 @@ fn build_block<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>)
 fn build_item<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>) -> ListItem<'a> {
     let item = nodes[id].take().unwrap();
     let mut task = None;
-    // 任務清單：第一個子區塊是以 `[ ]`、`[x]` 開頭的段落
+    // Task list: the first child is a paragraph starting with `[ ]` or `[x]`
     if ctx.options.gfm
         && let Some(&first) = item.children.first()
         && let Some(para) = nodes[first].as_mut()
@@ -1024,7 +1024,7 @@ fn build_item<'a>(nodes: &mut [Option<Node<'a>>], id: usize, ctx: &Ctx<'_, 'a>) 
     }
 }
 
-/// 內容只有 `<!-- pagebreak -->` 的 HTML 區塊（不分大小寫，註解內可有空白）。
+/// An HTML block containing only `<!-- pagebreak -->` (case-insensitive, spaces allowed inside the comment).
 fn is_page_break(html: &str) -> bool {
     html.trim()
         .strip_prefix("<!--")
@@ -1032,7 +1032,7 @@ fn is_page_break(html: &str) -> bool {
         .is_some_and(|s| s.trim().eq_ignore_ascii_case("pagebreak"))
 }
 
-/// `[ ] `、`[x] `：回傳（是否勾選, 標記與其後空白的長度）。
+/// `[ ] ` or `[x] `: returns (checked, length of the marker and the following spaces).
 fn task_marker(s: &str) -> Option<(bool, usize)> {
     let b = s.as_bytes();
     if b.len() < 4 || b[0] != b'[' || b[2] != b']' || !scan::is_space_or_tab(b[3]) {
@@ -1050,7 +1050,7 @@ fn task_marker(s: &str) -> Option<(bool, usize)> {
     Some((checked, skip))
 }
 
-/// `[^label]:` 的標籤。標籤不能含空白或方括號。
+/// Label of `[^label]:`. The label cannot contain whitespace or brackets.
 fn footnote_def_label(rest: &str) -> Option<&str> {
     let inner = rest.strip_prefix("[^")?;
     let end = inner.find(']')?;
@@ -1059,7 +1059,7 @@ fn footnote_def_label(rest: &str) -> Option<&str> {
     (valid && inner[end + 1..].starts_with(':')).then_some(label)
 }
 
-/// 表格分隔列，例如 `| :-- | :-: | --: |`。必須含有 `|`。
+/// Table delimiter row such as `| :-- | :-: | --: |`. Must contain `|`.
 fn table_delimiter_row(rest: &str) -> Option<Vec<Align>> {
     if !rest.contains('|') {
         return None;
@@ -1083,7 +1083,7 @@ fn table_delimiter_row(rest: &str) -> Option<Vec<Align>> {
         .collect()
 }
 
-/// 把表格的一列拆成儲存格：去掉首尾的 `|`，以未跳脫的 `|` 分隔，`\|` 還原為 `|`。
+/// Split a table row into cells: strip the outer `|`, split on unescaped `|`, turn `\|` back into `|`.
 fn split_row(line: &str) -> Vec<Cow<'_, str>> {
     let s = line.trim_matches([' ', '\t']);
     let s = s.strip_prefix('|').unwrap_or(s);
@@ -1102,7 +1102,7 @@ fn split_row(line: &str) -> Vec<Cow<'_, str>> {
             _ => i += 1,
         }
     }
-    // 結尾沒有 `|` 時，最後一段也是儲存格
+    // Without a trailing `|`, the last segment is a cell too
     if start < b.len() || cells.is_empty() {
         cells.push(&s[start.min(b.len())..]);
     }
@@ -1131,7 +1131,7 @@ fn parse_link_defs(s: &str) -> (usize, Vec<(String, LinkDef<'_>)>) {
     (pos, defs)
 }
 
-/// ATX 標題：1–6 個 `#` 之後接空白或行尾。回傳（層級, 去除結尾 `#` 序列的內容）。
+/// ATX heading: 1–6 `#` followed by a space or end of line. Returns (level, content without the closing `#` sequence).
 fn atx_heading(rest: &str) -> Option<(u8, &str)> {
     let level = rest.bytes().take_while(|&c| c == b'#').count();
     if !(1..=6).contains(&level) {
@@ -1149,7 +1149,7 @@ fn atx_heading(rest: &str) -> Option<(u8, &str)> {
     Some((level as u8, content))
 }
 
-/// 開頭 fence：至少 3 個反引號（info 中不能有反引號）或波浪號。回傳 fence 長度。
+/// Opening fence: at least 3 backticks (no backtick in the info string) or tildes. Returns the fence length.
 fn code_fence(rest: &str) -> Option<usize> {
     let ch = *rest.as_bytes().first()?;
     if ch != b'`' && ch != b'~' {

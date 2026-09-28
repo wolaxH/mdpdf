@@ -1,4 +1,4 @@
-//! mdpdf 自有擴充的解析測試（規格測試涵蓋不到的部分）。
+//! Parser tests for mdpdf's own extensions (not covered by the spec tests).
 
 use mdparse::{BlockKind, Options, parse, parse_with};
 
@@ -25,12 +25,12 @@ fn page_break_marker() {
         kinds(md, Options::default()),
         ["h", "pagebreak", "h", "p", "pagebreak", "p"]
     );
-    // 純 CommonMark 下只是 HTML 註解
+    // In plain CommonMark it is just an HTML comment
     assert_eq!(
         kinds(md, Options::commonmark()),
         ["h", "html", "h", "p", "html", "p"]
     );
-    // 其他註解、同一行還有其他內容時都不是換頁
+    // Other comments, or extra content on the same line, are not page breaks
     assert_eq!(
         kinds(
             "<!-- note -->\n\n<!-- pagebreak --> x\n",
@@ -51,6 +51,6 @@ fn math_blocks() {
     );
     let doc = parse("$$\na + b\n= c $$\n");
     assert!(matches!(&doc.blocks[0].kind, BlockKind::MathBlock(tex) if tex == "a + b\n= c"));
-    // 同一行關閉後還有文字：是段落中的行內公式
+    // Text after the closing `$$` on the same line: inline math in a paragraph
     assert_eq!(kinds("$$ x $$ 之後的文字\n", Options::default()), ["p"]);
 }

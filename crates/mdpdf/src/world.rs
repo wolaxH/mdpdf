@@ -1,10 +1,10 @@
-//! 記憶體中的 Typst [`World`]。
+//! In-memory Typst [`World`].
 //!
-//! 主檔（codegen 產生的 Typst 原始碼）只存在記憶體，虛擬路徑放在 Markdown 所在目錄；
-//! 其餘檔案（圖片等）從磁碟讀取。專案根目錄設為檔案系統的 `/`，因此 Markdown 裡
-//! `../img.png` 或絕對路徑的圖片都能正常解析。不支援 Typst 套件。
+//! The main file (Typst source produced by codegen) exists only in memory, with a virtual path in
+//! the Markdown file's directory; other files (images, ...) are read from disk. The project root is
+//! the file system root `/`, so images at `../img.png` or absolute paths resolve normally. Typst packages are served only from the embedded set.
 //!
-//! typst 的 API 在版本間變動頻繁，所有與它直接互動的程式集中在這個模組。
+//! The typst API changes often between versions, so all code that talks to it directly lives in this module.
 
 use std::path::{Path, PathBuf};
 
@@ -30,8 +30,8 @@ pub struct MdWorld {
 }
 
 impl MdWorld {
-    /// 建立 World。`main_path` 是主檔的絕對路徑（不必真的存在），
-    /// 決定相對路徑的基準目錄與錯誤訊息中顯示的名稱。
+    /// Create a World. `main_path` is the absolute path of the main file (it need not exist); it
+    /// determines the base directory for relative paths and the name shown in diagnostics.
     pub fn new(main_path: &Path, main_text: String, fonts: FontStore) -> Result<Self> {
         let root = PathBuf::from("/");
         let vpath = VirtualPath::virtualize(&root, main_path)
@@ -54,7 +54,7 @@ impl MdWorld {
 }
 
 impl MdWorld {
-    /// 替換主檔內容（例如公式退回原文後重新產生的原始碼），其他檔案的快取一併清除。
+    /// Replace the main file content (e.g. source regenerated after formulas fell back to raw text); other file caches are cleared too.
     pub fn set_main_text(&mut self, text: String) {
         let loader = self.files.loader_mut();
         loader.main_text = Bytes::from_string(text);
@@ -121,7 +121,7 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/embedded_packages.rs"));
 }
 
-/// 內嵌的 Typst 套件（見 `assets/typst-packages/`）。不會從網路下載套件。
+/// Embedded Typst packages (see `assets/typst-packages/`). Packages are never downloaded.
 fn embedded_package_file(spec: &PackageSpec, path: &str) -> Option<Bytes> {
     let spec = spec.to_string();
     generated::PACKAGE_FILES
@@ -130,7 +130,7 @@ fn embedded_package_file(spec: &PackageSpec, path: &str) -> Option<Bytes> {
         .map(|(_, _, data)| Bytes::new(*data))
 }
 
-/// 設定 `SOURCE_DATE_EPOCH` 時使用固定時間，讓輸出可重現。
+/// Use a fixed time when `SOURCE_DATE_EPOCH` is set, for reproducible output.
 fn reproducible_time() -> Time {
     std::env::var("SOURCE_DATE_EPOCH")
         .ok()

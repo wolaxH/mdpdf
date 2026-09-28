@@ -1,8 +1,8 @@
-//! Markdown AST → Typst 原始碼。
+//! Markdown AST → Typst source.
 //!
-//! 所有文字都輸出成 Typst 字串字面值 `#"..."`，區塊與格式則對應到 Typst 的元素函式
-//! （`heading`、`list`、`raw`、`strong` 等），因此 Markdown 內容永遠不會被當成
-//! Typst 標記解讀。
+//! All text is emitted as Typst string literals `#"..."`, and blocks and formatting map to Typst
+//! element functions (`heading`, `list`, `raw`, `strong`, ...), so Markdown content is never
+//! interpreted as Typst markup.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use mdparse::{Align, Block, BlockKind, Cell, Inline, ListItem, is_cjk, normalize_label};
 
-/// codegen 產生的原始碼會呼叫的輔助函式。與樣式無關，永遠放在最前面。
-pub const PRELUDE: &str = r#"// mdpdf 輔助函式
+/// Helper functions called by the generated source. Unrelated to styling; always placed first.
+pub const PRELUDE: &str = r#"// mdpdf helper functions
 #let mdpdf-checkbox(checked) = box(
   width: 0.8em,
   height: 0.8em,
@@ -23,8 +23,8 @@ pub const PRELUDE: &str = r#"// mdpdf 輔助函式
 )
 "#;
 
-/// 文件含有數學公式時才加入：LaTeX 由 MiTeX 在 Rust 端轉成 Typst 數學語法，
-/// 再以 MiTeX 的指令定義（`mitex-scope`）求值。
+/// Added only when the document contains math: MiTeX converts LaTeX to Typst math syntax on the
+/// Rust side, and the result is evaluated with MiTeX's command definitions (`mitex-scope`).
 pub const MATH_PRELUDE: &str = r#"#import "@mdpdf/mitex-scope:0.2.4": mitex-scope
 #let mdpdf-math(code, block: false) = math.equation(
   block: block,
@@ -32,25 +32,25 @@ pub const MATH_PRELUDE: &str = r#"#import "@mdpdf/mitex-scope:0.2.4": mitex-scop
 )
 "#;
 
-/// 預設樣式模板，接在 [`PRELUDE`] 之後。
+/// Default style template, placed after [`PRELUDE`].
 pub const TEMPLATE: &str = include_str!("../../../assets/template.typ");
 
-/// Typst 能直接讀取的圖片格式（依副檔名判斷）。
+/// Image formats Typst can read directly (by file extension).
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf"];
 
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// 圖片相對路徑的基準目錄。設定時會檢查圖片是否存在；未設定則不檢查。
+    /// Base directory for relative image paths. When set, images are checked for existence; otherwise they are not.
     pub base_dir: Option<PathBuf>,
-    /// Markdown 解析選項。
+    /// Markdown parsing options.
     pub parse: mdparse::Options,
-    /// 強制以原文顯示的公式（[`Output::formulas`] 的索引），用於 Typst 排版失敗後重試。
+    /// Formulas forced to raw text (indices into [`Output::formulas`]), used to retry after a Typst layout failure.
     pub math_fallback: HashSet<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warning {
-    /// Markdown 原始行號（目前是所在區塊的起始行）。
+    /// Markdown source line (currently the first line of the enclosing block).
     pub line: u32,
     pub message: String,
 }
@@ -59,22 +59,22 @@ pub struct Warning {
 pub struct Output {
     pub source: String,
     pub warnings: Vec<Warning>,
-    /// 每個數學公式在 `source` 中的位置，依出現順序排列。
+    /// Location of each math formula in `source`, in document order.
     pub formulas: Vec<Formula>,
 }
 
-/// 產生的原始碼中的一個數學公式。
+/// A math formula in the generated source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Formula {
-    /// 公式呼叫在 `source` 中的位元組範圍。
+    /// Byte range of the formula call in `source`.
     pub range: Range<usize>,
-    /// Markdown 原始行號（所在區塊的起始行）。
+    /// Markdown source line (the first line of the enclosing block).
     pub line: u32,
-    /// LaTeX 原文。
+    /// LaTeX source.
     pub tex: String,
 }
 
-/// 把 Markdown 轉成完整的 Typst 原始碼（含模板）。
+/// Convert Markdown to complete Typst source (including the template).
 pub fn convert(markdown: &str, options: &Options) -> Output {
     let mut prefix = String::with_capacity(PRELUDE.len() + TEMPLATE.len() + 2);
     prefix.push_str(PRELUDE);
@@ -84,7 +84,7 @@ pub fn convert(markdown: &str, options: &Options) -> Output {
     assemble(prefix, markdown, options)
 }
 
-/// 只產生內文，不含模板（用到數學公式時仍會加上 [`MATH_PRELUDE`]）。
+/// Generate the body only, without the template ([`MATH_PRELUDE`] is still added when math is used).
 pub fn body(markdown: &str, options: &Options) -> Output {
     assemble(String::new(), markdown, options)
 }
@@ -110,7 +110,7 @@ fn assemble(mut source: String, markdown: &str, options: &Options) -> Output {
     }
 }
 
-/// 回傳是否有公式經 MiTeX 轉換（需要 [`MATH_PRELUDE`]）。
+/// Returns whether any formula was converted by MiTeX (and thus needs [`MATH_PRELUDE`]).
 fn write_body(
     out: &mut String,
     warnings: &mut Vec<Warning>,
@@ -159,18 +159,18 @@ struct Writer<'o, 'd, 'a> {
     out: &'o mut String,
     warnings: &'o mut Vec<Warning>,
     formulas: &'o mut Vec<Formula>,
-    /// 是否有公式經 MiTeX 轉換。
+    /// Whether any formula was converted by MiTeX.
     uses_math: bool,
-    /// 目前區塊的巢狀層數，最外層為 1。
+    /// Nesting depth of the current block; the top level is 1.
     depth: usize,
     options: &'o Options,
-    /// 目前處理中區塊的起始行，用於警告。
+    /// First line of the block being processed, for warnings.
     line: u32,
-    /// 腳註定義（正規化標籤 → 內容）。
+    /// Footnote definitions (normalized label → content).
     footnote_defs: HashMap<String, &'d [Block<'a>]>,
-    /// 已輸出的腳註及其 Typst 標籤編號，重複引用時指向同一個腳註。
+    /// Footnotes already emitted and their Typst label ids; repeated references point to the same footnote.
     footnote_ids: HashMap<String, usize>,
-    /// 正在輸出的腳註，防止腳註引用自己造成無窮遞迴。
+    /// Footnotes being emitted, to prevent infinite recursion when a footnote references itself.
     footnotes_in_progress: HashSet<String>,
 }
 
@@ -182,18 +182,18 @@ impl Writer<'_, '_, '_> {
         });
     }
 
-    /// 輸出一串區塊，彼此以空行分隔。每個區塊都以換行結尾。
+    /// Emit a sequence of blocks separated by blank lines. Every block ends with a newline.
     fn blocks(&mut self, blocks: &[Block]) {
         self.depth += 1;
         let mut first = true;
         for block in blocks {
-            // Typst 只允許在最外層換頁；清單、引言、腳註內的換頁標記忽略
+            // Typst allows page breaks only at the top level; markers inside lists, quotes or footnotes are ignored
             if matches!(block.kind, BlockKind::PageBreak) && self.depth > 1 {
                 self.line = block.span.line;
                 self.warn("換頁標記只能用在最外層（不能在清單、引言或腳註中），已忽略".into());
                 continue;
             }
-            // 原始 HTML 不渲染；腳註定義在引用處輸出
+            // Raw HTML is not rendered; footnote definitions are emitted where referenced
             if matches!(
                 block.kind,
                 BlockKind::Html(_) | BlockKind::FootnoteDef { .. }
@@ -213,7 +213,7 @@ impl Writer<'_, '_, '_> {
     fn block(&mut self, block: &Block) {
         match &block.kind {
             BlockKind::Paragraph(inlines) if is_image_paragraph(inlines) => {
-                // 只有圖片的段落：圖片獨立成區塊並置中
+                // A paragraph with only images: each image becomes a centered block
                 for inline in inlines {
                     if let Inline::Image { url, alt, .. } = inline {
                         self.image(url, alt, true);
@@ -245,7 +245,7 @@ impl Writer<'_, '_, '_> {
                     None => write!(self.out, "#list(tight: {tight},"),
                 }
                 .unwrap();
-                // 任務清單以核取方塊取代項目符號
+                // Task lists replace the bullet with a checkbox
                 if ordered.is_none() && items.iter().any(|i| i.task.is_some()) {
                     self.out.push_str(" marker: [],");
                 }
@@ -271,7 +271,7 @@ impl Writer<'_, '_, '_> {
                 self.out.push('\n');
             }
             BlockKind::ThematicBreak => self.out.push_str("#line(length: 100%)\n"),
-            // weak：已經在新頁開頭時不會再多出一頁空白
+            // weak: no extra blank page when already at the start of a page
             BlockKind::PageBreak => self.out.push_str("#pagebreak(weak: true)\n"),
             BlockKind::Table { align, head, rows } => self.table(align, head, rows),
         }
@@ -282,13 +282,13 @@ impl Writer<'_, '_, '_> {
         let align: Vec<_> = align
             .iter()
             .map(|a| match a {
-                // 明確指定靠左，外層的置中才不會影響儲存格
+                // Explicit left alignment so an outer center alignment does not affect the cells
                 Align::None | Align::Left => "left",
                 Align::Center => "center",
                 Align::Right => "right",
             })
             .collect();
-        // 單欄時要加逗號，否則 `(left)` 不是陣列
+        // A single column needs a trailing comma, otherwise `(left)` is not an array
         let trailing = if align.len() == 1 { "," } else { "" };
         writeln!(self.out, "  align: ({}{trailing}),", align.join(", ")).unwrap();
         self.out.push_str("  table.header(");
@@ -323,7 +323,7 @@ impl Writer<'_, '_, '_> {
     }
 
     fn inlines(&mut self, inlines: &[Inline]) {
-        // 相鄰的文字合併成一個字串字面值
+        // Merge adjacent text into a single string literal
         let mut run = String::new();
         for (i, inline) in inlines.iter().enumerate() {
             match inline {
@@ -374,7 +374,7 @@ impl Writer<'_, '_, '_> {
                 Inline::Link { url, content, .. } => {
                     self.flush_text(&mut run);
                     if url.is_empty() {
-                        // Typst 不接受空的連結目標，只輸出文字
+                        // Typst rejects an empty link target; emit only the text
                         self.inlines(content);
                     } else {
                         self.out.push_str("#link(");
@@ -393,11 +393,11 @@ impl Writer<'_, '_, '_> {
                         self.flush_text(&mut run);
                         self.out.push_str("#linebreak()");
                     }
-                    // 標準 HTML 標籤不渲染（標籤之間的文字仍會保留）
+                    // Standard HTML tags are not rendered (the text between them is kept)
                     Some(name) if is_html_element(name) => {}
-                    // 不是 HTML 元素的「標籤」多半是 `Vec<T>` 這類文字，原樣輸出
+                    // A "tag" that is not an HTML element is usually text such as `Vec<T>`; emit it verbatim
                     Some(_) => run.push_str(html),
-                    // 註解、處理指令等
+                    // Comments, processing instructions, etc.
                     None => {}
                 },
             }
@@ -405,7 +405,7 @@ impl Writer<'_, '_, '_> {
         self.flush_text(&mut run);
     }
 
-    /// 以 MiTeX 把 LaTeX 轉成 Typst 數學式。轉換失敗或被指定退回時，以等寬原文顯示。
+    /// Convert LaTeX to Typst math with MiTeX. On conversion failure, or when forced to fall back, show the raw source in monospace.
     fn math(&mut self, tex: &str, block: bool) {
         let index = self.formulas.len();
         let start = self.out.len();
@@ -443,7 +443,7 @@ impl Writer<'_, '_, '_> {
         });
     }
 
-    /// 第一次引用時輸出完整腳註並加上標籤，之後的引用指向同一個腳註。
+    /// The first reference emits the full footnote with a label; later references point to it.
     fn footnote(&mut self, label: &str) {
         let key = normalize_label(label);
         if let Some(id) = self.footnote_ids.get(&key) {
@@ -479,7 +479,7 @@ impl Writer<'_, '_, '_> {
             Ok(path) => path,
             Err(message) => {
                 self.warn(message);
-                // 佔位框：顯示 alt 文字（沒有就顯示路徑）
+                // Placeholder box: show the alt text (or the path when there is none)
                 let label = if alt.is_empty() { url } else { &alt };
                 self.out
                     .push_str(if block { "#align(center, " } else { "#" });
@@ -506,7 +506,7 @@ impl Writer<'_, '_, '_> {
         self.out.push_str("))");
     }
 
-    /// 檢查圖片是否可用，回傳要交給 Typst 的路徑。
+    /// Check that an image is usable and return the path to hand to Typst.
     fn check_image(&self, url: &str) -> Result<String, String> {
         if url.is_empty() {
             return Err("圖片路徑是空的".into());
@@ -534,7 +534,7 @@ impl Writer<'_, '_, '_> {
     }
 }
 
-/// 標準 HTML 元素名稱（已排序）。
+/// Standard HTML element names (sorted).
 const HTML_ELEMENTS: &[&str] = &[
     "a",
     "abbr",
@@ -648,7 +648,7 @@ const HTML_ELEMENTS: &[&str] = &[
     "wbr",
 ];
 
-/// 開始或結束標籤的名稱；註解等其他原始 HTML 回傳 `None`。
+/// Name of an open or closing tag; `None` for comments and other raw HTML.
 fn html_tag_name(html: &str) -> Option<&str> {
     let rest = html.strip_prefix("</").or_else(|| html.strip_prefix('<'))?;
     let len = rest
@@ -665,17 +665,17 @@ fn is_html_element(name: &str) -> bool {
         .is_ok()
 }
 
-/// 在 `cases(...)` 的值與條件之間加上間距。
+/// Add spacing between the values and conditions of `cases(...)`.
 ///
-/// MiTeX 把 LaTeX 的 `&` 原樣轉成 Typst 的對齊點，但 Typst 的 `cases` 在對齊點不留空白，
-/// `x^2 & x \ge 0` 會排成「x² x ≥ 0」。這裡只改 `cases(` 最外層的 `&`，
-/// 跳脫字元（`\(`、`\&` 等）與巢狀括號內的內容都不動。
+/// MiTeX turns LaTeX `&` into Typst alignment points, but Typst's `cases` leaves no space at an
+/// alignment point, so `x^2 & x \ge 0` would render as "x² x ≥ 0". Only the `&` at the top level of
+/// `cases(` is changed; escapes (`\(`, `\&`, ...) and nested parentheses are left alone.
 fn space_cases(code: &str) -> String {
     if !code.contains("cases(") {
         return code.to_string();
     }
     let mut out = String::with_capacity(code.len() + 16);
-    // 每層括號是否為 cases 的引數
+    // Whether each open parenthesis holds the arguments of cases
     let mut stack: Vec<bool> = Vec::new();
     let mut chars = code.char_indices();
     while let Some((i, c)) = chars.next() {
@@ -710,7 +710,7 @@ fn space_cases(code: &str) -> String {
     out
 }
 
-/// 段落是否只由圖片組成（圖片之間只有換行或空白）。
+/// Whether a paragraph consists only of images (with only line breaks or spaces between them).
 fn is_image_paragraph(inlines: &[Inline]) -> bool {
     inlines.iter().any(|i| matches!(i, Inline::Image { .. }))
         && inlines.iter().all(|i| match i {
@@ -727,7 +727,7 @@ fn first_char(inline: &Inline) -> Option<char> {
         | Inline::Strong(v)
         | Inline::Strike(v)
         | Inline::Link { content: v, .. } => v.first().and_then(first_char),
-        // 行內程式碼、圖片等視為非 CJK
+        // Code spans, images, etc. count as non-CJK
         _ => Some('a'),
     }
 }
@@ -743,7 +743,7 @@ fn last_char(inline: &Inline) -> Option<char> {
     }
 }
 
-/// 解碼 URL 中的 `%XX`，用於本機檔案路徑。
+/// Decode `%XX` in a URL, for local file paths.
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -763,24 +763,24 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// 原始碼中的軟換行在排版時是否應成為空白。
+/// Whether a soft line break in the source should become a space in the output.
 ///
-/// 兩側任一邊是 CJK 字元時不插入空白，否則中文段落每個換行處都會多出一個空格。
-/// 鄰接的不是文字（例如行內程式碼）時視為非 CJK。
+/// No space is inserted when either side is a CJK character; otherwise every line break in a
+/// Chinese paragraph would add a space. A neighbor that is not text (e.g. a code span) counts as non-CJK.
 pub fn soft_break(prev: Option<char>, next: Option<char>) -> bool {
     !(prev.is_some_and(is_cjk) || next.is_some_and(is_cjk))
 }
 
-/// 以 Typst 字串字面值 `#"..."` 輸出純文字。
+/// Emit plain text as a Typst string literal `#"..."`.
 ///
-/// 字串內只有 `"` 與 `\` 有特殊意義，因此文字中的 `*`、`_`、`#`、`$`、`@` 等
-/// 標記字元不會被 Typst 解讀，從根本避免注入問題。
+/// Only `"` and `\` are special inside a string, so markup characters in the text such as `*`,
+/// `_`, `#`, `$` and `@` are never interpreted by Typst, which rules out injection entirely.
 pub fn push_text(out: &mut String, text: &str) {
     out.push('#');
     push_str_literal(out, text);
 }
 
-/// 輸出 Typst 字串字面值（含前後引號）。
+/// Emit a Typst string literal (including the quotes).
 pub fn push_str_literal(out: &mut String, text: &str) {
     out.push('"');
     for c in text.chars() {
@@ -884,7 +884,7 @@ mod tests {
             "cases( x & quad x >= 0 , - x & quad x < 0 )"
         );
         assert_eq!(space_cases("rcases(a & b)"), "rcases(a & quad b)");
-        // 巢狀括號與跳脫字元內的 & 不處理
+        // & inside nested parentheses or escapes is left alone
         assert_eq!(
             space_cases("cases(f(a & b) & \\& c)"),
             "cases(f(a & b) & quad \\& c)"

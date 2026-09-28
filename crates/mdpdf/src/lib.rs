@@ -1,4 +1,4 @@
-//! mdpdf：Markdown → Typst → PDF。
+//! mdpdf: Markdown → Typst → PDF.
 
 pub mod fonts;
 pub mod world;
@@ -15,13 +15,13 @@ use typst_pdf::PdfOptions;
 
 pub use world::MdWorld;
 
-/// 編譯產出的 PDF。
+/// A compiled PDF.
 pub struct Pdf {
     pub bytes: Vec<u8>,
     pub pages: usize,
 }
 
-/// 編譯 World 的主檔並輸出 PDF。
+/// Compile the main file of the World and export a PDF.
 pub fn compile_pdf(world: &MdWorld) -> Warned<SourceResult<Pdf>> {
     let Warned { output, warnings } = typst::compile::<PagedDocument>(world);
     let output = output.and_then(|doc| {
@@ -34,26 +34,26 @@ pub fn compile_pdf(world: &MdWorld) -> Warned<SourceResult<Pdf>> {
     Warned { output, warnings }
 }
 
-/// [`render`] 的結果。
+/// Result of [`render`].
 pub struct Rendered {
-    /// 最後一次編譯用的 World，印出 Typst 診斷訊息時需要。
+    /// The World used for the last compilation, needed to print Typst diagnostics.
     pub world: MdWorld,
-    /// 最後一次編譯的 Typst 原始碼。
+    /// Typst source of the last compilation.
     pub source: String,
-    /// Markdown 層級的警告（找不到圖片、公式退回原文等）。
+    /// Markdown-level warnings (missing images, formulas shown as raw text, ...).
     pub warnings: Vec<md2typst::Warning>,
-    /// Typst 編譯結果與 Typst 的警告。
+    /// Typst compilation result and Typst warnings.
     pub result: Warned<SourceResult<Pdf>>,
 }
 
-/// 排版失敗時最多重試幾輪（每輪把出錯的公式改為原文）。
+/// Maximum number of retries after a layout failure (each round turns failing formulas into raw text).
 const MAX_MATH_RETRIES: usize = 5;
 
-/// Markdown → PDF 的完整流程。
+/// The complete Markdown → PDF pipeline.
 ///
-/// MiTeX 轉換成功的公式仍可能在 Typst 求值時出錯（例如 `\left(` 沒有對應的 `\right`）。
-/// 這時找出錯誤落在哪些公式裡，把它們改成以原文顯示後重新編譯，
-/// 而不是讓整份文件失敗。
+/// A formula that MiTeX converted successfully can still fail when Typst evaluates it (e.g. `\left(`
+/// without a matching `\right`). In that case, find the formulas the errors fall into, show them as
+/// raw text and compile again, instead of failing the whole document.
 pub fn render(
     markdown: &str,
     main_path: &Path,
@@ -100,7 +100,7 @@ pub fn render(
     unreachable!()
 }
 
-/// 找出錯誤位置（或其呼叫追蹤）落在哪些公式裡。回傳（公式索引, 錯誤訊息）。
+/// Find the formulas that error locations (or their call traces) fall into. Returns (formula index, error message).
 fn failing_formulas(
     world: &MdWorld,
     errors: &[SourceDiagnostic],

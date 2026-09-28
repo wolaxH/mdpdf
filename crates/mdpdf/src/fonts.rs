@@ -1,10 +1,10 @@
-//! 字型載入。
+//! Font loading.
 //!
-//! 依序載入，同名同字重的字型以先載入者為準：
-//! 1. `--font-path` 指定的檔案或目錄
-//! 2. 系統字型（可用 `--no-system-fonts` 關閉）
-//! 3. 內嵌 CJK 字型（feature `embed-cjk`）
-//! 4. Typst 附帶的拉丁、數學、等寬字型
+//! Sources are loaded in order; for fonts with the same family and variant, the first one wins:
+//! 1. files or directories given with `--font-path`
+//! 2. system fonts (disable with `--no-system-fonts`)
+//! 3. embedded CJK fonts (feature `embed-cjk`)
+//! 4. Latin, math and monospace fonts bundled with Typst
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,9 +16,9 @@ use typst_kit::fonts::FontStore;
 
 #[derive(Debug, Clone)]
 pub struct FontOptions {
-    /// 額外的字型檔或目錄。
+    /// Extra font files or directories.
     pub font_paths: Vec<PathBuf>,
-    /// 是否掃描系統字型目錄。
+    /// Whether to scan system font directories.
     pub system_fonts: bool,
 }
 

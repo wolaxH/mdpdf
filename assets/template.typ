@@ -1,11 +1,11 @@
-// mdpdf 預設樣式模板。codegen 會把轉換後的內文接在這份模板之後。
+// mdpdf default style template. Codegen appends the converted body after this template.
 
-// 預設內文用黑體；Noto Sans TC 本身也有拉丁字形，中英混排時筆畫風格一致。
+// The body uses a sans-serif (hei) face; Noto Sans TC has its own Latin glyphs, so mixed CJK/Latin text stays consistent.
 #set text(font: "Noto Sans TC", size: 11pt, lang: "zh", region: "tw")
 #set page(paper: "a4", margin: 2.5cm, numbering: "1")
 
 #set par(justify: true, leading: 0.8em, spacing: 1.2em)
-// Typst 預設的第二層符號 ‣ 不在 Noto Sans TC 裡，改用字型內有的符號。
+// Typst's default second-level marker ‣ is missing from Noto Sans TC; use markers the font has.
 #set list(indent: 0.4em, marker: ([•], [◦], [▪]))
 #set enum(indent: 0.4em)
 #set line(stroke: 0.5pt + luma(170))
@@ -14,10 +14,10 @@
 
 #show link: set text(fill: rgb("#1a5fb4"))
 
-// 等寬字型要接 CJK fallback，否則程式碼中的中文註解會變成豆腐字。
-// Typst 預設把 raw 縮成 0.8em，中文在程式碼中會顯得太小，這裡稍微放大。
+// Monospace fonts need a CJK fallback, otherwise CJK comments in code render as tofu.
+// Typst shrinks raw text to 0.8em, which makes CJK in code too small; enlarge it slightly.
 #show raw: set text(font: ("DejaVu Sans Mono", "Noto Sans TC"), size: 1.1em)
-// 短的程式碼區塊不跨頁；超過一頁放不下的長區塊只能允許斷開。
+// Short code blocks do not break across pages; blocks too long for one page must be allowed to break.
 #show raw.where(block: true): it => block(
   width: 100%,
   fill: luma(246),
@@ -39,13 +39,13 @@
   text(fill: luma(80), it.body),
 )
 
-// tight 清單項目內的區塊（例如嵌套清單）以行距而非段距分隔，與項目間距一致。
+// Blocks inside tight list items (e.g. nested lists) are separated by leading, not paragraph spacing, matching the item gap.
 #show selector(list.where(tight: true)).or(enum.where(tight: true)): it => {
   show selector(list).or(enum).or(raw.where(block: true)): set block(above: 0.8em, below: 0.8em)
   it
 }
 
-// 表格：細格線、表頭加底色與粗體；儲存格內不左右對齊，避免短文字被拉開。
+// Tables: thin rules, shaded bold header; no justification in cells so short text is not stretched.
 #set table(
   stroke: 0.5pt + luma(190),
   inset: (x: 8pt, y: 5pt),
@@ -54,7 +54,7 @@
 #show table.cell.where(y: 0): set text(weight: "bold")
 #show table: set par(justify: false)
 
-// 多段落的腳註：後續段落與第一段的文字對齊，而不是頂到編號左側。
+// Multi-paragraph footnotes: later paragraphs align with the first paragraph's text instead of the number.
 #show footnote.entry: it => {
   let number = numbering(it.note.numbering, ..counter(footnote).at(it.note.location()))
   grid(

@@ -1,4 +1,4 @@
-//! 每個 fixture 的 Typst 輸出快照。輸出變更時需以 `cargo insta review` 人工確認。
+//! Typst output snapshot of each fixture. Review output changes with `cargo insta review`.
 
 use std::path::Path;
 

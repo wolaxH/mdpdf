@@ -1,11 +1,11 @@
-//! Inline 階段：把段落或標題的文字內容解析成 [`Inline`] 序列。
+//! Inline phase: parse the text of a paragraph or heading into a sequence of [`Inline`] nodes.
 //!
-//! 依照 CommonMark 規格附錄的演算法：掃描時把 `*`、`_` 連續串與 `[`、`![` 記錄在
-//! delimiter stack 與 bracket stack，遇到 `]` 時嘗試組成連結，最後再以
-//! `process_emphasis` 配對強調。
+//! Follows the algorithm from the CommonMark spec appendix: while scanning, runs of `*` and `_` and
+//! the brackets `[` and `![` are recorded on the delimiter and bracket stacks; a `]` tries to form a
+//! link, and `process_emphasis` finally pairs up emphasis.
 //!
-//! 解析期間節點存在 arena 中並以雙向鏈結串列串起兄弟節點，這樣把一段兄弟節點
-//! 搬進新的強調或連結節點時，既有的節點索引都不會失效。
+//! During parsing, nodes live in an arena and siblings form a doubly linked list, so moving a range of
+//! siblings into a new emphasis or link node never invalidates existing node indices.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -13,15 +13,15 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{Inline, LinkDef};
 use crate::{Options, scan};
 
-/// 解析 inline 所需的文件層級資訊。
+/// Document-level information needed for inline parsing.
 pub struct Ctx<'c, 'a> {
     pub links: &'c HashMap<String, LinkDef<'a>>,
-    /// 已定義的腳註標籤（正規化後）。
+    /// Labels of defined footnotes (normalized).
     pub footnotes: &'c HashSet<String>,
     pub options: Options,
 }
 
-/// 解析一段內容。借用的內容產生借用的節點，否則整棵結果轉為 owned。
+/// Parse one piece of content. Borrowed content yields borrowed nodes; otherwise the result is converted to owned.
 pub fn parse<'a>(content: Cow<'a, str>, ctx: &Ctx<'_, 'a>) -> Vec<Inline<'a>> {
     match content {
         Cow::Borrowed(s) => parse_str(s, ctx),
@@ -103,13 +103,13 @@ impl<'s> Node<'s> {
     }
 }
 
-/// delimiter stack 的一項：一串 `*`、`_` 或 `~`。
+/// A delimiter stack entry: a run of `*`, `_` or `~`.
 #[derive(Debug)]
 struct Delim {
     ch: u8,
-    /// 尚未用掉的字元數。
+    /// Number of characters not yet used.
     count: usize,
-    /// 原始長度（「3 的倍數」規則使用）。
+    /// Original length (for the "multiple of 3" rule).
     orig: usize,
     node: usize,
     prev: Option<usize>,
@@ -121,13 +121,13 @@ struct Delim {
 #[derive(Debug)]
 struct Bracket {
     node: usize,
-    /// 推入時 delimiter stack 的頂端。
+    /// Top of the delimiter stack when this bracket was pushed.
     prev_delim: Option<usize>,
-    /// `[` 在原始字串中的位置。
+    /// Position of `[` in the source.
     index: usize,
     image: bool,
     active: bool,
-    /// 之後是否還有其他 `[`（有的話不必嘗試 shortcut 參照）。
+    /// Whether another `[` follows (if so, a shortcut reference need not be tried).
     bracket_after: bool,
 }
 
@@ -144,7 +144,7 @@ struct Parser<'s, 'm> {
 }
 
 impl<'s> Parser<'s, '_> {
-    // ---- 樹操作 ----
+    // ---- tree operations ----
 
     fn add(&mut self, parent: usize, kind: Kind<'s>) -> usize {
         let id = self.nodes.len();
@@ -212,7 +212,7 @@ impl<'s> Parser<'s, '_> {
         n.next = None;
     }
 
-    /// 把 `after` 之後（不含 `until`）的兄弟節點搬進 `container`。
+    /// Move the siblings after `after` (up to, but excluding, `until`) into `container`.
     fn move_siblings(&mut self, after: usize, until: Option<usize>, container: usize) {
         let mut cur = self.nodes[after].next;
         while let Some(node) = cur {
@@ -225,7 +225,7 @@ impl<'s> Parser<'s, '_> {
         }
     }
 
-    // ---- 掃描 ----
+    // ---- scanning ----
 
     fn peek(&self) -> Option<u8> {
         self.s.as_bytes().get(self.pos).copied()
@@ -269,7 +269,7 @@ impl<'s> Parser<'s, '_> {
         self.pos += len;
     }
 
-    /// 一般文字：讀到下一個可能有特殊意義的字元為止。
+    /// Plain text: read up to the next character that may be special.
     fn string(&mut self) {
         let start = self.pos;
         let rest = &self.s.as_bytes()[start..];
@@ -341,7 +341,7 @@ impl<'s> Parser<'s, '_> {
                 self.add(ROOT, Kind::Code(code));
                 self.pos = close + run;
             }
-            // 找不到對應的結尾時，整串反引號都是一般文字
+            // Without a matching closing run, the whole backtick run is plain text
             None => {
                 self.text(&self.s[start..self.pos]);
             }
@@ -378,12 +378,12 @@ impl<'s> Parser<'s, '_> {
         }
     }
 
-    // ---- 強調 ----
+    // ---- emphasis ----
 
-    /// 數學公式 `$...$` 或 `$$...$$`，內容保留 LaTeX 原文。
+    /// Math `$...$` or `$$...$$`, keeping the LaTeX source.
     ///
-    /// 行內公式沿用 pandoc 的規則，避免把金額誤判成公式：開頭的 `$` 後面不能是空白，
-    /// 結尾的 `$` 前面不能是空白、後面不能緊接數字。
+    /// Inline math follows pandoc's rules so that prices are not mistaken for formulas: the opening `$`
+    /// must not be followed by whitespace, and the closing `$` must not follow whitespace or precede a digit.
     fn math(&mut self) -> bool {
         let b = self.s.as_bytes();
         let start = self.pos;
@@ -423,7 +423,7 @@ impl<'s> Parser<'s, '_> {
         true
     }
 
-    /// `[^label]`：只有對應的腳註定義存在時才成立。
+    /// `[^label]`: only valid when a matching footnote definition exists.
     fn footnote_ref(&mut self) -> bool {
         let Some(inner) = self.s[self.pos..].strip_prefix("[^") else {
             return false;
@@ -453,7 +453,7 @@ impl<'s> Parser<'s, '_> {
         let (can_open, can_close) = self.flanking(start, count, ch);
         self.pos += count;
         let node = self.text(&self.s[start..self.pos]);
-        // 刪除線只接受一或兩個 `~`
+        // Strikethrough accepts only one or two `~`
         let usable = ch != b'~' || count <= 2;
         if usable && (can_open || can_close) {
             let id = self.delims.len();
@@ -474,7 +474,7 @@ impl<'s> Parser<'s, '_> {
         }
     }
 
-    /// 依 left-/right-flanking 規則判斷這串 delimiter 能否開啟或關閉強調。
+    /// Apply the left-/right-flanking rules to decide whether this delimiter run can open or close emphasis.
     fn flanking(&self, start: usize, count: usize, ch: u8) -> (bool, bool) {
         let before = self.s[..start].chars().next_back().unwrap_or('\n');
         let after = self.s[start + count..].chars().next().unwrap_or('\n');
@@ -483,7 +483,7 @@ impl<'s> Parser<'s, '_> {
         let after_ws = scan::is_unicode_whitespace(after);
         let after_punct = scan::is_unicode_punct(after);
 
-        // CJK 寬鬆模式：外側緊鄰中日韓文字時，視同外側是空白或標點
+        // CJK-friendly mode: a CJK character on the outer side counts like whitespace or punctuation
         let cjk = self.options.cjk_emphasis;
         let before_cjk = cjk && scan::is_cjk(before);
         let after_cjk = cjk && scan::is_cjk(after);
@@ -512,7 +512,7 @@ impl<'s> Parser<'s, '_> {
     }
 
     fn process_emphasis(&mut self, stack_bottom: Option<usize>) {
-        // 每種字元、「能否開啟」與「原長度 mod 3」各自記錄搜尋下界
+        // Search lower bounds kept per character, per "can open", and per "original length mod 3"
         let mut openers_bottom = [[stack_bottom; 6]; 3];
 
         let mut closer = self.top;
@@ -544,7 +544,7 @@ impl<'s> Parser<'s, '_> {
             {
                 let (od, cd) = (&self.delims[o], &self.delims[c]);
                 let compatible = if ch == b'~' {
-                    // 刪除線的開頭與結尾長度必須相同
+                    // Strikethrough opener and closer must have the same length
                     od.count == cd.count
                 } else {
                     let odd_match = (cd.can_open || od.can_close)
@@ -594,7 +594,7 @@ impl<'s> Parser<'s, '_> {
             self.move_siblings(o_node, Some(c_node), emph);
             self.insert_after(o_node, emph);
 
-            // 夾在中間的 delimiter 都失效
+            // Delimiters in between become inactive
             if self.delims[c].prev != Some(o) {
                 self.delims[c].prev = Some(o);
                 self.delims[o].next = Some(c);
@@ -615,7 +615,7 @@ impl<'s> Parser<'s, '_> {
         }
     }
 
-    // ---- 連結與圖片 ----
+    // ---- links and images ----
 
     fn push_bracket(&mut self, node: usize, index: usize, image: bool) {
         if let Some(last) = self.brackets.last_mut() {
@@ -652,7 +652,7 @@ impl<'s> Parser<'s, '_> {
         );
 
         let target = self.inline_link().or_else(|| {
-            // 參照連結：完整 `[text][label]`、摺疊 `[text][]` 或捷徑 `[text]`
+            // Reference link: full `[text][label]`, collapsed `[text][]` or shortcut `[text]`
             let after = self.pos;
             let (n, label) = match scan::link_label(&self.s[after..]) {
                 Some((n, label)) => (n, Some(label)),
@@ -689,7 +689,7 @@ impl<'s> Parser<'s, '_> {
         self.brackets.pop();
         self.unlink(opener_node);
 
-        // 連結裡不能再有連結：讓外層所有 `[` 失效（圖片的 `![` 不受影響）
+        // No links inside links: deactivate all outer `[` (image `![` is not affected)
         if !image {
             for bracket in &mut self.brackets {
                 if !bracket.image {
@@ -699,7 +699,7 @@ impl<'s> Parser<'s, '_> {
         }
     }
 
-    /// `](dest "title")`。成功時前進到 `)` 之後。
+    /// `](dest "title")`. On success, advance past the `)`.
     #[allow(clippy::type_complexity)]
     fn inline_link(&mut self) -> Option<(Cow<'s, str>, Option<Cow<'s, str>>)> {
         let s = self.s;
@@ -725,7 +725,7 @@ impl<'s> Parser<'s, '_> {
         Some((scan::unescape(raw_dest), title))
     }
 
-    // ---- 輸出 ----
+    // ---- output ----
 
     fn build(&mut self, parent: usize) -> Vec<Inline<'s>> {
         let mut out: Vec<Inline<'s>> = Vec::new();
@@ -738,7 +738,7 @@ impl<'s> Parser<'s, '_> {
                     if text.is_empty() {
                         continue;
                     }
-                    // 相鄰文字合併；在原始字串中連續時仍可借用
+                    // Merge adjacent text; stays borrowed when contiguous in the source
                     if let Some(Inline::Text(prev)) = out.last_mut() {
                         merge_text(self.s, prev, text);
                         continue;
@@ -780,7 +780,7 @@ fn merge_text<'s>(src: &'s str, prev: &mut Cow<'s, str>, next: Cow<'s, str>) {
         let base = src.as_ptr() as usize;
         let a_start = (a.as_ptr() as usize).wrapping_sub(base);
         let b_start = (b.as_ptr() as usize).wrapping_sub(base);
-        // 兩者都是 src 的切片且首尾相接
+        // Both are slices of src and one ends where the other starts
         if a_start <= src.len() && b_start <= src.len() && a_start + a.len() == b_start {
             *prev = Cow::Borrowed(&src[a_start..b_start + b.len()]);
             return;
@@ -789,7 +789,7 @@ fn merge_text<'s>(src: &'s str, prev: &mut Cow<'s, str>, next: Cow<'s, str>) {
     prev.to_mut().push_str(&next);
 }
 
-/// 從 `from` 開始尋找長度恰好為 `run` 的反引號串。
+/// Find a backtick run of exactly `run` characters, starting at `from`.
 fn find_closing_backticks(b: &[u8], from: usize, run: usize) -> Option<usize> {
     let mut i = from;
     while i < b.len() {
@@ -806,7 +806,7 @@ fn find_closing_backticks(b: &[u8], from: usize, run: usize) -> Option<usize> {
     None
 }
 
-/// 行內程式碼內容：換行轉為空白；前後都有空白（且不全是空白）時各去掉一個。
+/// Code span content: newlines become spaces; one space is stripped from each side when both sides have one (unless all spaces).
 fn code_span_content(raw: &str) -> Cow<'_, str> {
     let strip = |s: &str| -> (usize, usize) {
         let b = s.as_bytes();
@@ -958,7 +958,7 @@ mod tests {
             }]
         );
         assert_eq!(parse("$\\$5$"), [math("\\$5")]);
-        // 金額不是公式
+        // Prices are not formulas
         assert_eq!(parse("價格 $5 到 $10"), [text("價格 $5 到 $10")]);
         assert_eq!(parse("$ x$"), [text("$ x$")]);
         assert_eq!(parse("\\$x$"), [text("$x$")]);
@@ -988,7 +988,7 @@ mod tests {
             Options::commonmark(),
         );
         assert_eq!(strict, [text("這是**「重點」**這樣")]);
-        // 非 CJK 文字維持標準規則
+        // Non-CJK text keeps the standard rules
         assert_eq!(parse("a**\"b\"**c"), [text("a**\"b\"**c")]);
     }
 

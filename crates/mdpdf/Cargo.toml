@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [features]
 default = ["embed-cjk"]
-# 內嵌 Noto Sans TC（build 時以 zstd 壓縮）。關閉後只剩 Typst 附帶字型與系統字型。
+# Embed Noto Sans TC (zstd-compressed at build time). Without it only Typst's bundled fonts and system fonts remain.
 embed-cjk = ["dep:zstd"]
 
 [dependencies]

@@ -1,13 +1,13 @@
-//! 產生內嵌資源：
-//! - `assets/fonts/` 的 CJK 字型，以 zstd 壓縮
-//! - `assets/typst-packages/<命名空間>/<名稱>/<版本>/` 下的 Typst 套件
+//! Generate embedded resources:
+//! - CJK fonts from `assets/fonts/`, compressed with zstd
+//! - Typst packages under `assets/typst-packages/<namespace>/<name>/<version>/`
 
 use std::env;
 use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 內嵌的字型檔（位於 `assets/fonts/`）。
+/// Font files to embed (in `assets/fonts/`).
 const EMBEDDED_CJK: &[&str] = &["NotoSansTC-Regular.otf", "NotoSansTC-Bold.otf"];
 
 fn main() {
@@ -38,7 +38,7 @@ fn main() {
     fs::write(
         out.join("embedded_fonts.rs"),
         format!(
-            "/// zstd 壓縮後的內嵌 CJK 字型。\npub static CJK_FONTS: &[&[u8]] = &[\n{entries}];\n"
+            "/// Embedded CJK fonts, zstd-compressed.\npub static CJK_FONTS: &[&[u8]] = &[\n{entries}];\n"
         ),
     )
     .unwrap();
@@ -46,7 +46,7 @@ fn main() {
     embed_packages(&out);
 }
 
-/// 把 Typst 套件的每個檔案列成 `(套件, 套件內路徑, 內容)` 的表。
+/// List every file of the Typst packages as `(package, path inside the package, content)`.
 fn embed_packages(out: &Path) {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
         .join("../../assets/typst-packages");
@@ -75,7 +75,7 @@ fn embed_packages(out: &Path) {
     }
     fs::write(
         out.join("embedded_packages.rs"),
-        format!("/// 內嵌的 Typst 套件檔案：（套件, 套件內路徑, 內容）。\npub static PACKAGE_FILES: &[(&str, &str, &[u8])] = &[\n{entries}];\n"),
+        format!("/// Embedded Typst package files: (package, path inside the package, content).\npub static PACKAGE_FILES: &[(&str, &str, &[u8])] = &[\n{entries}];\n"),
     )
     .unwrap();
 }

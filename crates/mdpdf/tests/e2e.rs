@@ -1,17 +1,17 @@
-//! 端到端：fixture → Typst → PDF。
+//! End to end: fixture → Typst → PDF.
 
 use std::path::Path;
 
 use mdpdf::fonts::{self, FontOptions};
 
-/// 轉換 fixture，並要求編譯成功。回傳 PDF 與 Markdown 層級的警告。
+/// Convert a fixture and require it to compile. Returns the PDF and Markdown-level warnings.
 fn render_with_warnings(name: &str) -> (mdpdf::Pdf, Vec<md2typst::Warning>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures")
         .canonicalize()
         .unwrap();
     let markdown = std::fs::read_to_string(dir.join(name)).unwrap();
-    // 不讀系統字型，確保結果只取決於內嵌字型。
+    // Skip system fonts so the result depends only on embedded fonts.
     let fonts = fonts::load(&FontOptions {
         system_fonts: false,
         ..Default::default()
@@ -26,7 +26,7 @@ fn render_with_warnings(name: &str) -> (mdpdf::Pdf, Vec<md2typst::Warning>) {
         .result
         .output
         .unwrap_or_else(|errors| panic!("編譯失敗：{errors:#?}"));
-    // 找不到字型時 typst 只會發警告，因此 Typst 警告也視為失敗。
+    // Typst only warns when a font is missing, so Typst warnings count as failures too.
     assert!(
         rendered.result.warnings.is_empty(),
         "出現警告：{:#?}",
@@ -35,7 +35,7 @@ fn render_with_warnings(name: &str) -> (mdpdf::Pdf, Vec<md2typst::Warning>) {
     (pdf, rendered.warnings)
 }
 
-/// 轉換 fixture，並要求沒有任何警告。
+/// Convert a fixture and require no warnings at all.
 fn render(name: &str) -> mdpdf::Pdf {
     let (pdf, warnings) = render_with_warnings(name);
     assert!(warnings.is_empty(), "Markdown 警告：{warnings:#?}");
@@ -81,7 +81,7 @@ fn m3_gfm_renders() {
 fn m4_math_falls_back_on_bad_formulas() {
     let (pdf, warnings) = render_with_warnings("m4-math.md");
     assert!(pdf.pages >= 1);
-    // 一個在 MiTeX 轉換時失敗，一個在 Typst 排版時失敗，其餘公式都要成功
+    // One fails in MiTeX conversion, one in Typst layout; every other formula must succeed
     let messages: Vec<_> = warnings
         .iter()
         .map(|w| (w.line, w.message.as_str()))

@@ -1,5 +1,5 @@
 #!/bin/sh
-# 下載內嵌用的 CJK 字型（Noto Sans TC，OFL 授權）到 assets/fonts/
+# Download the CJK fonts to embed (Noto Sans TC, OFL) into assets/fonts/
 set -eu
 cd "$(dirname "$0")/../assets/fonts"
 base=https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/TC
