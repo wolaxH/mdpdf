@@ -50,15 +50,22 @@ pub fn parse_str<'s, 'a: 's>(s: &'s str, ctx: &Ctx<'_, 'a>, line: u32) -> Vec<In
         delims: Vec::new(),
         top: None,
         brackets: Vec::new(),
+        backtick_runs: None,
+        html_unterminated: [None; 4],
+        line_cache: (0, line),
     };
     while p.pos < s.len() {
         p.parse_inline();
     }
     p.process_emphasis(None);
-    p.build(ROOT)
+    p.build(ROOT, 0)
 }
 
 const ROOT: usize = 0;
+
+/// Maximum nesting of emphasis, links and images. Deeper formatting is dropped (its text is
+/// kept), which bounds recursion in this parser and in every consumer of the tree.
+pub(crate) const MAX_NESTING: usize = 100;
 
 #[derive(Debug)]
 enum Kind<'s> {
@@ -151,6 +158,13 @@ struct Parser<'s, 'm> {
     delims: Vec<Delim>,
     top: Option<usize>,
     brackets: Vec<Bracket>,
+    /// Start positions of all backtick runs, grouped by run length; built on first use.
+    backtick_runs: Option<HashMap<usize, Vec<usize>>>,
+    /// For comments, processing instructions, CDATA and declarations: a position after which the
+    /// terminator is known not to occur.
+    html_unterminated: [Option<usize>; 4],
+    /// Last (position, line) computed by `line_at`.
+    line_cache: (usize, u32),
 }
 
 impl<'s> Parser<'s, '_> {
@@ -237,8 +251,17 @@ impl<'s> Parser<'s, '_> {
 
     // ---- scanning ----
 
-    fn line_at(&self, pos: usize) -> u32 {
-        self.line + self.s[..pos].matches('\n').count() as u32
+    /// Source line of `pos`. Positions are mostly queried in increasing order, so counting
+    /// continues from the previous query instead of from the start.
+    fn line_at(&mut self, pos: usize) -> u32 {
+        let (from, line) = if pos >= self.line_cache.0 {
+            self.line_cache
+        } else {
+            (0, self.line)
+        };
+        let line = line + self.s[from..pos].matches('\n').count() as u32;
+        self.line_cache = (pos, line);
+        line
     }
 
     fn peek(&self) -> Option<u8> {
@@ -349,7 +372,7 @@ impl<'s> Parser<'s, '_> {
         let start = self.pos;
         let run = b[start..].iter().take_while(|&&c| c == b'`').count();
         self.pos += run;
-        match find_closing_backticks(b, self.pos, run) {
+        match self.closing_backticks(self.pos, run) {
             Some(close) => {
                 let code = code_span_content(&self.s[self.pos..close]);
                 self.add(ROOT, Kind::Code(code));
@@ -360,6 +383,38 @@ impl<'s> Parser<'s, '_> {
                 self.text(&self.s[start..self.pos]);
             }
         }
+    }
+
+    /// Start of the first backtick run of exactly `run` characters at or after `from`. Uses an
+    /// index of all runs, so many unmatched openers do not each rescan the rest of the input.
+    fn closing_backticks(&mut self, from: usize, run: usize) -> Option<usize> {
+        let s = self.s;
+        let runs = self
+            .backtick_runs
+            .get_or_insert_with(|| index_backtick_runs(s.as_bytes()));
+        let starts = runs.get(&run)?;
+        starts.get(starts.partition_point(|&p| p < from)).copied()
+    }
+
+    /// Raw inline HTML. Comments, processing instructions, CDATA and declarations run until a
+    /// terminator; once a search for one fails, no later search can succeed, so it is skipped.
+    fn inline_html(&mut self, rest: &str) -> Option<usize> {
+        let kind = [("<!--", 0), ("<?", 1), ("<![CDATA[", 2), ("<!", 3)]
+            .iter()
+            .find(|(prefix, _)| rest.starts_with(prefix))
+            .map(|&(_, kind)| kind);
+        if let Some(kind) = kind
+            && self.html_unterminated[kind].is_some_and(|after| self.pos >= after)
+        {
+            return None;
+        }
+        let found = scan::inline_html(rest);
+        if found.is_none()
+            && let Some(kind) = kind
+        {
+            self.html_unterminated[kind] = Some(self.pos);
+        }
+        found
     }
 
     fn angle(&mut self) {
@@ -384,7 +439,7 @@ impl<'s> Parser<'s, '_> {
             );
             self.add(link, Kind::Text(Cow::Borrowed(uri)));
             self.pos += n;
-        } else if let Some(n) = scan::inline_html(rest) {
+        } else if let Some(n) = self.inline_html(rest) {
             self.add(ROOT, Kind::Html(&rest[..n]));
             self.pos += n;
         } else {
@@ -743,53 +798,100 @@ impl<'s> Parser<'s, '_> {
 
     // ---- output ----
 
-    fn build(&mut self, parent: usize) -> Vec<Inline<'s>> {
+    fn build(&mut self, parent: usize, depth: usize) -> Vec<Inline<'s>> {
         let mut out: Vec<Inline<'s>> = Vec::new();
         let mut cur = self.nodes[parent].first;
         while let Some(id) = cur {
             cur = self.nodes[id].next;
             let kind = std::mem::replace(&mut self.nodes[id].kind, Kind::Root);
+            let container = matches!(
+                kind,
+                Kind::Emph | Kind::Strong | Kind::Strike | Kind::Link { .. } | Kind::Image { .. }
+            );
+            if container && depth >= MAX_NESTING {
+                // Too deep: keep the text, drop the formatting, and avoid recursing further
+                self.flatten(id, &mut out);
+                continue;
+            }
             let inline = match kind {
-                Kind::Text(text) => {
-                    if text.is_empty() {
-                        continue;
-                    }
-                    // Merge adjacent text; stays borrowed when contiguous in the source
-                    if let Some(Inline::Text(prev)) = out.last_mut() {
-                        merge_text(self.s, prev, text);
-                        continue;
-                    }
-                    Inline::Text(text)
-                }
-                Kind::Code(code) => Inline::Code(code),
-                Kind::Html(html) => Inline::Html(Cow::Borrowed(html)),
-                Kind::SoftBreak => Inline::SoftBreak,
-                Kind::HardBreak => Inline::HardBreak,
-                Kind::Emph => Inline::Emph(self.build(id)),
-                Kind::Strong => Inline::Strong(self.build(id)),
-                Kind::Strike => Inline::Strike(self.build(id)),
-                Kind::FootnoteRef(label) => Inline::FootnoteRef(Cow::Borrowed(label)),
-                Kind::Math { tex, display, line } => Inline::Math {
-                    tex: Cow::Borrowed(tex),
-                    display,
-                    line,
-                },
+                Kind::Emph => Inline::Emph(self.build(id, depth + 1)),
+                Kind::Strong => Inline::Strong(self.build(id, depth + 1)),
+                Kind::Strike => Inline::Strike(self.build(id, depth + 1)),
                 Kind::Link { url, title } => Inline::Link {
                     url,
                     title,
-                    content: self.build(id),
+                    content: self.build(id, depth + 1),
                 },
                 Kind::Image { url, title, line } => Inline::Image {
                     url,
                     title,
-                    alt: self.build(id),
+                    alt: self.build(id, depth + 1),
                     line,
                 },
-                Kind::Root => unreachable!(),
+                leaf => {
+                    self.push_leaf(leaf, &mut out);
+                    continue;
+                }
             };
             out.push(inline);
         }
         out
+    }
+
+    /// Append the leaves under `parent` to `out`, dropping the formatting nodes in between.
+    /// Iterative, so arbitrarily deep input cannot overflow the stack.
+    fn flatten(&mut self, parent: usize, out: &mut Vec<Inline<'s>>) {
+        let mut stack = vec![self.nodes[parent].first];
+        while let Some(top) = stack.last_mut() {
+            let Some(id) = *top else {
+                stack.pop();
+                continue;
+            };
+            *top = self.nodes[id].next;
+            match std::mem::replace(&mut self.nodes[id].kind, Kind::Root) {
+                Kind::Emph
+                | Kind::Strong
+                | Kind::Strike
+                | Kind::Link { .. }
+                | Kind::Image { .. } => {
+                    stack.push(self.nodes[id].first);
+                }
+                leaf => self.push_leaf(leaf, out),
+            }
+        }
+    }
+
+    fn push_leaf(&mut self, kind: Kind<'s>, out: &mut Vec<Inline<'s>>) {
+        let inline = match kind {
+            Kind::Text(text) => {
+                if text.is_empty() {
+                    return;
+                }
+                // Merge adjacent text; stays borrowed when contiguous in the source
+                if let Some(Inline::Text(prev)) = out.last_mut() {
+                    merge_text(self.s, prev, text);
+                    return;
+                }
+                Inline::Text(text)
+            }
+            Kind::Code(code) => Inline::Code(code),
+            Kind::Html(html) => Inline::Html(Cow::Borrowed(html)),
+            Kind::SoftBreak => Inline::SoftBreak,
+            Kind::HardBreak => Inline::HardBreak,
+            Kind::FootnoteRef(label) => Inline::FootnoteRef(Cow::Borrowed(label)),
+            Kind::Math { tex, display, line } => Inline::Math {
+                tex: Cow::Borrowed(tex),
+                display,
+                line,
+            },
+            Kind::Emph
+            | Kind::Strong
+            | Kind::Strike
+            | Kind::Link { .. }
+            | Kind::Image { .. }
+            | Kind::Root => unreachable!("not a leaf"),
+        };
+        out.push(inline);
     }
 }
 
@@ -807,21 +909,20 @@ fn merge_text<'s>(src: &'s str, prev: &mut Cow<'s, str>, next: Cow<'s, str>) {
     prev.to_mut().push_str(&next);
 }
 
-/// Find a backtick run of exactly `run` characters, starting at `from`.
-fn find_closing_backticks(b: &[u8], from: usize, run: usize) -> Option<usize> {
-    let mut i = from;
+/// Start positions of every maximal backtick run, grouped by length (each list is sorted).
+fn index_backtick_runs(b: &[u8]) -> HashMap<usize, Vec<usize>> {
+    let mut runs: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut i = 0;
     while i < b.len() {
         if b[i] == b'`' {
             let n = b[i..].iter().take_while(|&&c| c == b'`').count();
-            if n == run {
-                return Some(i);
-            }
+            runs.entry(n).or_default().push(i);
             i += n;
         } else {
             i += 1;
         }
     }
-    None
+    runs
 }
 
 /// Code span content: newlines become spaces; one space is stripped from each side when both sides have one (unless all spaces).

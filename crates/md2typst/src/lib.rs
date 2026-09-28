@@ -45,6 +45,11 @@ pub const MATH_PRELUDE: &str = r#"#import "@mdpdf/mitex-scope:0.2.4": mitex-scop
 )
 "#;
 
+/// Typst allows 64 nested show rule applications, and each level of list, quote or inline
+/// formatting uses two or three of them with the default template. Deeper nesting is flattened.
+const MAX_BLOCK_NESTING: usize = 16;
+const MAX_INLINE_NESTING: usize = 8;
+
 /// Default style template, placed after [`PRELUDE`].
 pub const TEMPLATE: &str = include_str!("../../../assets/template.typ");
 
@@ -298,6 +303,9 @@ fn write_body(
         footnotes_in_progress: HashSet::new(),
         uses_math: false,
         depth: 0,
+        containers: 0,
+        formatting: 0,
+        warned_too_deep: false,
     };
     writer.blocks(&doc.blocks);
     writer.uses_math
@@ -330,6 +338,11 @@ struct Writer<'o, 'd, 'a> {
     uses_math: bool,
     /// Nesting depth of the current block; the top level is 1.
     depth: usize,
+    /// Enclosing lists and block quotes.
+    containers: usize,
+    /// Enclosing emphasis, strong, strikethrough and links.
+    formatting: usize,
+    warned_too_deep: bool,
     options: &'o Options,
     /// First line of the block being processed, for warnings.
     line: u32,
@@ -348,6 +361,15 @@ impl Writer<'_, '_, '_> {
 
     fn warn_at(&mut self, line: u32, message: String) {
         self.warnings.push(Warning { line, message });
+    }
+
+    fn blocks_ref(&mut self, blocks: &[&Block]) {
+        for (i, block) in blocks.iter().enumerate() {
+            if i > 0 {
+                self.out.push('\n');
+            }
+            self.blocks(std::slice::from_ref(*block));
+        }
     }
 
     /// Emit a sequence of blocks separated by blank lines. Every block ends with a newline.
@@ -399,10 +421,21 @@ impl Writer<'_, '_, '_> {
                 self.inlines(content);
                 self.out.push_str("]\n");
             }
+            BlockKind::BlockQuote(children) if self.containers >= MAX_BLOCK_NESTING => {
+                self.too_deep();
+                self.blocks(children);
+            }
             BlockKind::BlockQuote(children) => {
+                self.containers += 1;
                 self.out.push_str("#quote(block: true)[\n");
                 self.blocks(children);
                 self.out.push_str("]\n");
+                self.containers -= 1;
+            }
+            BlockKind::List { items, .. } if self.containers >= MAX_BLOCK_NESTING => {
+                self.too_deep();
+                let blocks: Vec<&Block> = items.iter().flat_map(|item| &item.blocks).collect();
+                self.blocks_ref(&blocks);
             }
             BlockKind::List {
                 ordered,
@@ -419,9 +452,11 @@ impl Writer<'_, '_, '_> {
                     self.out.push_str(" marker: [],");
                 }
                 self.out.push('\n');
+                self.containers += 1;
                 for item in items {
                     self.list_item(item);
                 }
+                self.containers -= 1;
                 self.out.push_str(")\n");
             }
             BlockKind::CodeBlock { lang, code } => {
@@ -516,21 +551,15 @@ impl Writer<'_, '_, '_> {
                 }
                 Inline::Emph(children) => {
                     self.flush_text(&mut run);
-                    self.out.push_str("#emph[");
-                    self.inlines(children);
-                    self.out.push(']');
+                    self.wrapped("#emph[", children);
                 }
                 Inline::Strong(children) => {
                     self.flush_text(&mut run);
-                    self.out.push_str("#strong[");
-                    self.inlines(children);
-                    self.out.push(']');
+                    self.wrapped("#strong[", children);
                 }
                 Inline::Strike(children) => {
                     self.flush_text(&mut run);
-                    self.out.push_str("#strike[");
-                    self.inlines(children);
-                    self.out.push(']');
+                    self.wrapped("#strike[", children);
                 }
                 Inline::Math { tex, display, line } => {
                     self.flush_text(&mut run);
@@ -546,11 +575,10 @@ impl Writer<'_, '_, '_> {
                         // Typst rejects an empty link target; emit only the text
                         self.inlines(content);
                     } else {
-                        self.out.push_str("#link(");
-                        push_str_literal(self.out, url);
-                        self.out.push_str(")[");
-                        self.inlines(content);
-                        self.out.push(']');
+                        let mut open = String::from("#link(");
+                        push_str_literal(&mut open, url);
+                        open.push_str(")[");
+                        self.wrapped(&open, content);
                     }
                 }
                 Inline::Image { url, alt, line, .. } => {
@@ -611,6 +639,28 @@ impl Writer<'_, '_, '_> {
             line,
             kind: FallibleKind::Math(tex.to_string()),
         });
+    }
+
+    /// Emit `children` inside `open` ... `]`, or without the wrapper once formatting is nested too deeply.
+    fn wrapped(&mut self, open: &str, children: &[Inline]) {
+        if self.formatting >= MAX_INLINE_NESTING {
+            self.too_deep();
+            self.inlines(children);
+            return;
+        }
+        self.formatting += 1;
+        self.out.push_str(open);
+        self.inlines(children);
+        self.out.push(']');
+        self.formatting -= 1;
+    }
+
+    /// Warn once that nesting beyond the limits was flattened.
+    fn too_deep(&mut self) {
+        if !self.warned_too_deep {
+            self.warned_too_deep = true;
+            self.warn("巢狀層數過深，更深層的清單、引言或文字格式已省略".into());
+        }
     }
 
     /// The first reference emits the full footnote with a label; later references point to it.

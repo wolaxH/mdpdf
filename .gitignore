@@ -2,3 +2,6 @@
 # Embedded fonts are large; download them with scripts/fetch-fonts.sh
 /assets/fonts/*.otf
 /examples/*.pdf
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts

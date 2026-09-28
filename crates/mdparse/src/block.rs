@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Align, Block, BlockKind, Cell, Document, LinkDef, ListItem, Span};
-use crate::inline::Ctx;
+use crate::inline::{Ctx, MAX_NESTING};
 use crate::{Options, inline, scan};
 
 const CODE_INDENT: usize = 4;
@@ -307,6 +307,16 @@ impl<'a> Parser<'a> {
 
     // ---- tree operations ----
 
+    /// Number of ancestors of `id`.
+    fn depth(&self, mut id: usize) -> usize {
+        let mut depth = 0;
+        while id != ROOT {
+            id = self.nodes[id].parent;
+            depth += 1;
+        }
+        depth
+    }
+
     fn span_at(&self, offset: usize) -> Span {
         let col = self.line[..offset].chars().count() as u32 + 1;
         Span {
@@ -540,13 +550,15 @@ impl<'a> Parser<'a> {
     }
 
     fn block_start(&mut self, container: usize) -> Start {
+        // Past the nesting limit, no new containers open: the markers become text instead
+        let too_deep = self.depth(container) >= MAX_NESTING;
         let rest = &self.line[self.next_nonspace..];
         let first = rest.as_bytes().first().copied();
         let in_paragraph = matches!(self.nodes[container].kind, Kind::Paragraph);
 
         if !self.indented {
             // Block quote
-            if first == Some(b'>') {
+            if first == Some(b'>') && !too_deep {
                 self.advance_next_nonspace();
                 self.advance_offset(1, false);
                 if self.peek(self.offset).is_some_and(scan::is_space_or_tab) {
@@ -621,6 +633,7 @@ impl<'a> Parser<'a> {
             // Footnote definition `[^label]:` (cannot interrupt a paragraph)
             if self.options.gfm
                 && !in_paragraph
+                && !too_deep
                 && let Some(label) = footnote_def_label(rest)
             {
                 self.advance_next_nonspace();
@@ -688,6 +701,7 @@ impl<'a> Parser<'a> {
 
         // List item
         if (!self.indented || matches!(self.nodes[container].kind, Kind::List { .. }))
+            && !too_deep
             && let Some(data) = self.parse_list_marker(in_paragraph)
         {
             self.close_unmatched_blocks();
