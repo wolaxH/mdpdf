@@ -1,0 +1,25 @@
+[package]
+name = "mdpdf"
+description = "Markdown to PDF, powered by an embedded Typst compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["embed-cjk"]
+# 內嵌 Noto Sans TC（build 時以 zstd 壓縮）。關閉後只剩 Typst 附帶字型與系統字型。
+embed-cjk = ["dep:zstd"]
+
+[dependencies]
+md2typst.workspace = true
+typst.workspace = true
+typst-pdf.workspace = true
+typst-layout.workspace = true
+typst-kit = { workspace = true, features = ["embedded-fonts", "scan-fonts", "datetime", "emit-diagnostics"] }
+anyhow.workspace = true
+clap.workspace = true
+zstd = { workspace = true, optional = true }
+
+[build-dependencies]
+zstd.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "md2typst"
+description = "Markdown AST to Typst source codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mdparse.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

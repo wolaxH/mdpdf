@@ -1,0 +1,68 @@
+---
+source: crates/md2typst/tests/snapshots.rs
+expression: "md2typst::body(&fixture(\"m1-blocks.md\"))"
+---
+#heading(level: 1)[#"季度報告"]
+
+#"本報告說明第三季的**進度**與風險。第二行接續同一段落，English words continue here."
+
+#heading(level: 2)[#"清單"]
+
+#list(tight: true,
+[
+#"無序項目一"
+],
+[
+#"無序項目二"
+
+#list(tight: true,
+[
+#"嵌套項目（tight）"
+],
+[
+#"另一個嵌套項目"
+],
+)
+],
+[
+#"無序項目三"
+],
+)
+
+#enum(start: 3, tight: false,
+[
+#"從三開始的有序清單"
+],
+[
+#"第二項"
+
+#"第二項的第二段落（loose）"
+],
+[
+#"第三項"
+],
+)
+
+#heading(level: 2)[#"程式碼"]
+
+#raw(block: true, lang: "rust", "// 中文註解應正常顯示\nfn main() {\n    println!(\"你好，\\\"世界\\\" \\\\ `反引號`\");\n}")
+
+#raw(block: true, "縮排程式碼區塊\n第二行")
+
+#"行內程式碼 "#raw("let x = 1;")#" 與硬換行："#linebreak()#"這是新的一行，反斜線也可以"#linebreak()#"換行。"
+
+#quote(block: true)[
+#"引言中的段落。第二行。"
+
+#list(tight: true,
+[
+#"引言中的清單"
+],
+)
+]
+
+#line(length: 100%)
+
+#heading(level: 2)[#"Setext 標題"]
+
+#"最後一段：Typst 標記 #set、$x$、@ref、<label> 與 *星號* 原樣輸出。"
